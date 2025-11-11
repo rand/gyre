@@ -48,6 +48,7 @@ If you spot conflicts, align with the higher-precedence document and open a bead
 - Evaluation harness: `scripts/evaluate_selection.py` replays recorded candidates through the planner + selector to surface ledger stats and selection traces before shipping changes.
 - Transport broker: use `POST /patches/inject` (backed by `gyre/transports/broker.py`) to simulate sending CPP payloads through OpenAI/Anthropic/Gemini stubs; responses include transport acknowledgements for audit trails.
 - Governance: register consent via `POST /governance/consent` before calling `/patches/inject`; the policy engine enforces token budgets and redaction rules (see `gyre/governance.py`) and audit events are persisted under `data/audit.log`.
+- Chaos/health: toggle transports for tests with `POST /transports/chaos` (set `available=false`) and inspect broker status via `GET /transports/status` to verify cooldowns/failure counts.
 
 
 > This distribution has been renamed to **Gyre**.

@@ -74,6 +74,10 @@ class ConsentRequest(BaseModel):
     user: str
     consent: bool = True
 
+class TransportChaosRequest(BaseModel):
+    transport: str
+    available: bool
+
 @app.post("/observe/ingest")
 def ingest(payload: Ingest):
     task = infer_task_desc(payload.events)
@@ -230,3 +234,13 @@ def inject_patch(req: InjectPatch):
 def set_consent(req: ConsentRequest):
     CONSENTS.grant(req.tenant, req.project, req.user, req.consent)
     return {"ok": True}
+
+@app.post("/transports/chaos")
+def set_transport_state(req: TransportChaosRequest):
+    if not BROKER.set_availability(req.transport, req.available):
+        raise HTTPException(status_code=404, detail="Unknown transport")
+    return {"ok": True}
+
+@app.get("/transports/status")
+def transport_status():
+    return BROKER.status()

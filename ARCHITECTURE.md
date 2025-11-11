@@ -15,7 +15,7 @@
 | **Composer & Compression** | Convert chosen candidates into slot-based blueprints (task header, constraints, prefs, evidence, tool args, citations) while enforcing slot caps and dedupe/citation guarantees. | `composer.py` (token-aware slots), `BlueprintFill` + `SummarizeForSlot`, compression operators. |
 | **Governance & Redaction** | Apply policy packs (scope, sensitivity, consent), redact sensitive payloads, log provenance + redaction diffs, block injection if budgets exceeded. | `governance.py`, consent registry (`gyre/consent.py`), audit store (`gyre/audit.py`). |
 | **Reviewer Console** | Surface recent candidates, ledgers, manual exports, and audit history. | `/review/candidates`, `/review/export_patch`, `/review/audit`, `scripts/reviewer_cli.py`, future UI. |
-| **Transport Broker** | Route Context Patch Protocol (CPP) payloads to OpenAI Realtime, Anthropic Computer Use, Gemini function calling, with retries/circuit breakers. | `gyre/transports/broker.py`, transport adapters, ack telemetry. |
+| **Transport Broker** | Route Context Patch Protocol (CPP) payloads to OpenAI Realtime, Anthropic Computer Use, Gemini function calling, with retries/circuit breakers and chaos hooks. | `gyre/transports/broker.py`, transport adapters, ack telemetry, `/transports/chaos`. |
 | **Learning & Evaluation** | Collect labels, compile DSPy programs (MIPROv2/COPRO), replay sessions to measure efficacy-per-token, redundancy, staleness, safety. | `scripts/seed_datasets.py`, `scripts/evaluate_selection.py`, evaluation harness, OpenTelemetry traces, `/metrics/observer`. |
 
 ## 2. Control & Data Flow

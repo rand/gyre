@@ -87,3 +87,6 @@ def test_inject_endpoint_returns_ack():
     data = resp.json()
     assert data["ok"]
     assert data["transport"] == "openai"
+    client.post("/transports/chaos", json={"transport": "openai", "available": False})
+    status = client.get("/transports/status").json()
+    assert status["transports"]["openai"] is False

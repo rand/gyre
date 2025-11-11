@@ -14,3 +14,14 @@ def test_broker_prefers_available_transport():
 def test_flatten_blueprint():
     text = flatten_blueprint({"slots": [{"name": "constraints", "content": "Stay safe"}]})
     assert "[constraints]" in text
+
+
+def test_broker_falls_back_when_transport_down():
+    broker = TransportBroker.default()
+    broker.set_availability("openai", False)
+    patch = {
+        "target_session_id": "sess-1",
+        "body": {"slots": [{"name": "task_header", "content": "Test"}]},
+    }
+    result = broker.inject(patch, preferred="openai")
+    assert result["transport"] != "openai"
