@@ -127,6 +127,7 @@ CLI helpers:
 - `scripts/pipe_provider_events.py` — turn provider logs into ingest batches (`--provider openai|anthropic`).
 - `scripts/reviewer_cli.py list|export` — inspect candidates and craft manual patches from the terminal.
 - `scripts/evaluate_selection.py` — offline Stage A/B evaluation harness.
+- `scripts/consolidate_graph.py` — prune stale nodes from the temporal graph (`--ttl-hours` defaults to 24) to keep persistence lean.
 
 ---
 
