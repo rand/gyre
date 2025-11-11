@@ -75,7 +75,7 @@ curl -X POST http://localhost:8000/patches/inject \
 ## Project Layout
 
 ```
-├── docs/PRD.md / docs/SPEC.md / docs/ARCHITECTURE.md / docs/AGENTS.md
+├── docs/PRD.md / docs/SPEC.md / docs/ARCHITECTURE.md / AGENTS.md
 ├── gyre/
 │   ├── observer.py / planner.py / selector.py / composer.py
 │   ├── stores/               # Private store + temporal graph prototype
@@ -132,7 +132,7 @@ CLI helpers:
 
 ## Development Workflow
 
-1. **Docs First**: docs/PRD → docs/SPEC → docs/ARCHITECTURE → README/docs/AGENTS. Align changes with the documents (open a beads issue if they diverge).
+1. **Docs First**: docs/PRD → docs/SPEC → docs/ARCHITECTURE → README/AGENTS. Align changes with the documents (open a beads issue if they diverge).
 2. **Environment**: use `uv` for installs/tests (`uv run pytest -q`). Secrets live in `.env`.
 3. **Issue Tracking**: run `bd quickstart` for the Beads workflow. Create tasks (`bd create "feat"`), model dependencies (`bd dep add`), and keep statuses updated (`bd update issue --status in_progress`).  
 4. **Coding Guidelines**: Python ≥3.10, type hints, four-space indent. Prefer composition over inheritance; update or create `tests/test_<module>.py` alongside code changes.
