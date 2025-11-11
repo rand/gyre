@@ -1,54 +1,163 @@
-# Agentic Memory Supervisor (Gyre) — Starter
+# Gyre — Agentic Memory Supervisor
 
-This repo is a buildable starter for a proactive, safe, efficient agentic memory service that can **observe** agent sessions and **inject** minimal context patches.
+Gyre is a proactive memory supervisor for AI agents. It **observes** every turn of an agent session, plans high-value retrievals, and **injects** minimal Context Patch Protocol (CPP) payloads through provider transports (OpenAI Realtime, Anthropic Computer Use, Gemini function calls). The service keeps safety, provenance, and token budgets front‑and‑center so copilots stay on task without hallucinated context or policy violations.
 
-## Quickstart (Python with `uv`)
+---
+
+## Table of Contents
+1. [Architecture Overview](#architecture-overview)
+2. [Quickstart](#quickstart)
+3. [Project Layout](#project-layout)
+4. [Key Workflows](#key-workflows)
+5. [HTTP & CLI Surface](#http--cli-surface)
+6. [Development Workflow](#development-workflow)
+7. [Testing & Evaluation](#testing--evaluation)
+8. [Roadmap & References](#roadmap--references)
+
+---
+
+## Architecture Overview
+
+| Layer | Responsibilities | Key Modules |
+| --- | --- | --- |
+| **Session Taps** | Mirror chat/tool/IDE streams without modifying host agents. | `gyre.taps.*`, `scripts/replay_session.py`, `scripts/pipe_provider_events.py` |
+| **Observer** | Canonicalize events, infer task state, compute novelty signals. | `gyre/observer.py`, `/observe/ingest` |
+| **Stores & Planner** | Persist private working sets, update the temporal graph, run Stage‑A deferred query planner. | `gyre/stores/*`, `gyre/planner.py` |
+| **Selector & Composer** | Stage‑B knapsack+MMR selection under budgets, slot-based composition with citations. | `gyre/selector.py`, `gyre/composer.py` |
+| **Governance & Audit** | Consent registry, policy packs, redaction, immutable audit log. | `gyre/governance.py`, `gyre/consent.py`, `gyre/audit.py` |
+| **Transports** | Broker CPP payloads into provider transports with health/chaos controls. | `gyre/transports/broker.py`, `/patches/inject`, `/transports/status` |
+| **Evaluation & Tooling** | Replay traces, generate datasets, reviewer console. | `scripts/evaluate_selection.py`, `scripts/reviewer_cli.py`, `tests/*` |
+
+Gyre’s product intent, spec, and architecture live in `PRD.md`, `SPEC.md`, and `ARCHITECTURE.md`. Those documents set the precedent order; match code to the PRD first.
+
+---
+
+## Quickstart
 
 ```bash
-# Create env and install
+# Bootstrap environment (requires Python ≥ 3.10)
 uv venv
 uv pip install -e .
 
-# Copy env and set provider keys
+# Configure secrets
 cp .env.example .env
-# export OPENAI_API_KEY=... etc
+# export OPENAI_API_KEY=..., ANTHROPIC_API_KEY=..., GEMINI_API_KEY=...
 
-# Run dev server
-uv run python server/run_dev_server.py
-
-# Seed tiny training data and run DSPy light compiles
+# Seed toy datasets
 uv run python scripts/seed_datasets.py
+
+# Run the dev server (FastAPI + stub transports)
+uv run python server/run_dev_server.py
 ```
 
-## Layout
-- `PRD.md`, `SPEC.md`, `ARCHITECTURE.md`, `RESEARCH-REFERENCES.md`
-- `agentic_memory/` — code
-- `data/train/` — tiny JSONL datasets for DSPy optimizers
-- `tests/` — minimal tests
-- `transports/` adapters for OpenAI, Anthropic, Gemini
+Smoke test the pipeline end-to-end:
+```bash
+# Ingest a recorded trace
+uv run python scripts/replay_session.py --session demo --trace traces/example.jsonl
 
-## Documentation Stack
-Follow the documents in this order when making design or implementation decisions:
-1. `PRD.md` — source of truth for product goals and milestones.
-2. `SPEC.md` — canonical APIs, schemas, and constraints derived from the PRD.
-3. `ARCHITECTURE.md` — system design that satisfies the spec (update it whenever the spec changes).
-4. `README.md` / `AGENTS.md` — contributor workflow, tooling, and local procedures.
-If you spot conflicts, align with the higher-precedence document and open a beads issue describing the delta.
+# Request a patch
+curl -X POST http://localhost:8000/patches/propose \
+  -H 'Content-Type: application/json' \
+  -d @scripts/examples/propose.json
 
-## Notes
-- DSPy programs are wired with signatures and can be compiled later with MIPROv2/COPRO once you accumulate logs.
-- Transports are stubs; wire them to your infra for real injection.
-- Session taps now live in `gyre.taps`; use `scripts/replay_session.py --session demo --trace traces/example.jsonl` to stream a trace into the dev server. Provider-specific adapters (e.g., OpenAI Realtime) can call the same base helper and post to `/observe/ingest`.
-- Provider ingestion helper: `scripts/pipe_provider_events.py` supports `--provider openai|anthropic` to translate raw provider logs into Gyre events.
-- Reviewer endpoints: `GET /review/candidates`, `POST /review/export_patch`, and `GET /review/audit` power audits; `scripts/reviewer_cli.py` wraps these for quick CLI workflows when labeling data or showcasing Gyre.
-- Observability: call `GET /metrics/observer` to inspect ingest counts/novelty stats while developing. Extend this instrumentation (or wire your own telemetry backend) before deploying to larger environments.
-- Stage A planner: the dev server now runs a stub `DeferredQueryPlanner` before selection; inspect the `stage_a` field in `/patches/propose` responses or extend `gyre/planner.py` with your real query providers.
-- Stage B selector: `/patches/propose` responses include a `ledger` (token/latency consumption) and `trace` (selected item gains) produced by the new budget-aware selector in `gyre/selector.py`.
-- Slot composer: `gyre/composer.py` enforces per-slot caps and records token counts so manual/automatic patches share the same blueprint metadata; see `/review/export_patch` responses for examples.
-- Evaluation harness: `scripts/evaluate_selection.py` replays recorded candidates through the planner + selector to surface ledger stats and selection traces before shipping changes.
-- Transport broker: use `POST /patches/inject` (backed by `gyre/transports/broker.py`) to simulate sending CPP payloads through OpenAI/Anthropic/Gemini stubs; responses include transport acknowledgements for audit trails.
-- Governance: register consent via `POST /governance/consent` before calling `/patches/inject`; the policy engine enforces token budgets and redaction rules (see `gyre/governance.py`) and audit events are persisted under `data/audit.log`.
-- Chaos/health: toggle transports for tests with `POST /transports/chaos` (set `available=false`) and inspect broker status via `GET /transports/status` to verify cooldowns/failure counts.
+# Grant consent and inject the patch through the OpenAI transport stub
+curl -X POST http://localhost:8000/governance/consent \
+  -d '{"tenant":"demo","project":"demo","user":"demo","consent":true}' \
+  -H 'Content-Type: application/json'
 
+curl -X POST http://localhost:8000/patches/inject \
+  -H 'Content-Type: application/json' \
+  -d '{"patch":{...from propose...},"transport":"openai"}'
+```
 
-> This distribution has been renamed to **Gyre**.
+---
+
+## Project Layout
+
+```
+├── AGENTS.md                 # Contributor guide (coding conventions, beads workflow)
+├── PRD.md / SPEC.md / ARCHITECTURE.md
+├── gyre/
+│   ├── observer.py / planner.py / selector.py / composer.py
+│   ├── stores/               # Private store + temporal graph prototype
+│   ├── transports/           # Provider adapters + broker
+│   ├── taps/                 # OpenAI/Anthropic adapters + replay helpers
+│   ├── governance.py         # Policy engine + redaction
+│   ├── consent.py / audit.py
+│   └── telemetry.py
+├── server/run_dev_server.py  # FastAPI surface for ingest/propose/inject/review
+├── scripts/                  # Replay, provider piping, reviewer CLI, eval harness
+├── tests/                    # Pytest coverage for every layer
+└── data/                     # `audit.log`, `consent.json`, eval traces (gitignored except placeholders)
+```
+
+---
+
+## Key Workflows
+
+### Observe → Plan → Select → Compose
+1. `/observe/ingest` normalizes tap events and writes candidates/graph entities.
+2. Stage‑A planner (`gyre/planner.py`) emits `deferred_query` candidates and executes the highest EV queries under latency/token budgets.
+3. Stage‑B selector (`gyre/selector.py`) runs knapsack + MMR, returning `selected`, `ledger`, and `trace` so every token and millisecond is accounted for.
+4. Composer (`gyre/composer.py`) fills slot blueprints with per-slot token counts; both proactive and manual reviewers use the same blueprint.
+
+### Governance & Transports
+1. Register per-scope consent via `POST /governance/consent`.
+2. `/patches/inject` validates consent, enforces policy packs, and forwards patches through the broker. Responses include transport acks; failures trigger cooldowns viewable via `GET /transports/status`.
+3. `data/audit.log` stores every manual/proactive patch action; reviewers can tail it via `GET /review/audit` or the CLI.
+
+### Evaluation
+Use `scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 600 --budget-latency 600` to replay recorded candidates through Stage A/B, reporting ledger stats and selection traces before shipping selector/planner changes.
+
+---
+
+## HTTP & CLI Surface
+
+| Endpoint | Description |
+| --- | --- |
+| `POST /observe/ingest` | Ingest tap batches, output task state + novelty report. |
+| `POST /patches/propose` | Run Stage A/B under explicit budgets; returns patch, Stage‑A ledger, Stage‑B ledger, and trace. |
+| `POST /patches/inject` | Inject a patch through the broker (requires prior consent). |
+| `GET /review/candidates` / `POST /review/export_patch` / `GET /review/audit` | Reviewer workflow for manual CPP exports and audits. |
+| `POST /governance/consent` | Record tenant/project/user consent. |
+| `POST /transports/chaos` / `GET /transports/status` | Toggle transport availability and view health/cooldown metrics. |
+| `GET /metrics/observer` | Observe→ingest telemetry (calls, tokens, novelty). |
+
+CLI helpers:
+- `scripts/replay_session.py` — stream JSON/JSONL traces into `/observe/ingest`.
+- `scripts/pipe_provider_events.py` — turn provider logs into ingest batches (`--provider openai|anthropic`).
+- `scripts/reviewer_cli.py list|export` — inspect candidates and craft manual patches from the terminal.
+- `scripts/evaluate_selection.py` — offline Stage A/B evaluation harness.
+
+---
+
+## Development Workflow
+
+1. **Docs First**: PRD → SPEC → ARCHITECTURE → README/AGENTS. Align changes with the documents (open a beads issue if they diverge).
+2. **Environment**: use `uv` for installs/tests (`uv run pytest -q`). Secrets live in `.env`.
+3. **Issue Tracking**: run `bd quickstart` for the Beads workflow. Create tasks (`bd create "feat"`), model dependencies (`bd dep add`), and keep statuses updated (`bd update issue --status in_progress`).  
+4. **Coding Guidelines**: Python ≥3.10, type hints, four-space indent. Prefer composition over inheritance; update or create `tests/test_<module>.py` alongside code changes.
+5. **Policies & Consent**: before testing injections, grant consent via `POST /governance/consent`. The policy engine rejects over-budget patches.
+
+---
+
+## Testing & Evaluation
+
+- Unit/integration suite: `uv run python -m pytest -q`. Tests cover taps, observer, planner, selector, transports, reviewer flows, governance, and evaluation harness.
+- E2E smoke: run the dev server, replay a trace, request a patch, grant consent, and inject through a transport.
+- Offline selection analysis: `scripts/evaluate_selection.py` surfaces Stage A/B ledger stats for any recorded trace.
+- Chaos: `POST /transports/chaos` lets you simulate transport outages to ensure fallbacks + cooldowns behave.
+
+---
+
+## Roadmap & References
+
+- **M2**: Proactive CPP injection with transport broker, policy/redaction, consent, and chaos testing (all staged here).  
+- **M3**: Temporal graph hardening, skill promotion, and cohort sharing (see `ARCHITECTURE.md`).  
+- **M4**: Adaptive DSPy learning loops and automated evaluation harnesses.
+
+Research references: `RESEARCH-REFERENCES.md` aggregates the papers (ACE, DSPy, GraphRAG, etc.) that informed this design.
+
+---
+
+Gyre is built to be extended: replace the stub transports with real ones, wire your observability stack into the telemetry endpoints, and iterate on the planner/selector using the evaluation harness. Contributions that keep efficacy-per-token high and policies airtight are welcome.
