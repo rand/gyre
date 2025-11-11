@@ -1,4 +1,4 @@
-# Gyre — Agentic Memory Supervisor
+# Gyre :: Agentic Memory Supervisor
 
 Gyre is a proactive memory supervisor for AI agents. It **observes** every turn of an agent session, plans high-value retrievals, and **injects** minimal Context Patch Protocol (CPP) payloads through provider transports (OpenAI Realtime, Anthropic Computer Use, Gemini function calls). The service keeps safety, provenance, and token budgets front‑and‑center so copilots stay on task without hallucinated context or policy violations.
 
