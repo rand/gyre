@@ -82,6 +82,9 @@ class TemporalGraph:
             self._persist()
         return promoted
 
+    def get_skills(self) -> Dict[str, Any]:
+        return dict(self.skills)
+
     def snapshot(self) -> Dict[str, Any]:
         return nx.node_link_data(self.G.copy())
 

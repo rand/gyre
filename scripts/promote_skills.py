@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 
 from gyre.stores.graph_store import TemporalGraph
+from gyre.skills import SkillRegistry
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,7 +19,9 @@ def main() -> None:
     args = parse_args()
     graph = TemporalGraph(Path(args.path))
     promoted = graph.promote_skills(min_references=args.min_references)
-    print(f"Promoted {promoted} skills from graph {args.path}")
+    registry = SkillRegistry()
+    synced = registry.sync(graph.get_skills())
+    print(f"Promoted {promoted} skills and synced {synced} entries from {args.path}")
 
 
 if __name__ == "__main__":

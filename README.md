@@ -121,6 +121,7 @@ Use `scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 6
 | `POST /governance/consent` | Record tenant/project/user consent. |
 | `POST /transports/chaos` / `GET /transports/status` | Toggle transport availability and view health/cooldown metrics. |
 | `GET /metrics/observer` | Observe→ingest telemetry (calls, tokens, novelty). |
+| `GET /skills` / `POST /skills/share` | List promoted skills (consent-gated) and share them with cohorts. |
 
 CLI helpers:
 - `scripts/replay_session.py` — stream JSON/JSONL traces into `/observe/ingest`.
@@ -128,6 +129,7 @@ CLI helpers:
 - `scripts/reviewer_cli.py list|export` — inspect candidates and craft manual patches from the terminal.
 - `scripts/evaluate_selection.py` — offline Stage A/B evaluation harness.
 - `scripts/consolidate_graph.py` — prune stale nodes from the temporal graph (`--ttl-hours` defaults to 24) to keep persistence lean.
+- `scripts/promote_skills.py` — promote high-signal nodes into the skill registry and sync them for sharing.
 
 ---
 

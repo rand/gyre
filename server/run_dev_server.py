@@ -16,6 +16,7 @@ from gyre.planner import DeferredQueryPlanner
 from gyre.transports.broker import TransportBroker
 from gyre.audit import AuditLog
 from gyre.consent import ConsentRegistry
+from gyre.skills import SkillRegistry
 
 app = FastAPI(title="Gyre Dev Server")
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -26,6 +27,7 @@ BROKER = TransportBroker.default()
 POLICY = PolicyEngine()
 AUDIT = AuditLog(DATA_DIR / "audit.log")
 CONSENTS = ConsentRegistry(DATA_DIR / "consent.json")
+SKILLS = SkillRegistry(DATA_DIR / "skills.json")
 
 def build_fragments(task_desc: str, chosen: List[Dict[str, Any]], executed_tools: List[Dict[str, Any]]) -> Dict[str, str]:
     evidence = []
@@ -77,6 +79,10 @@ class ConsentRequest(BaseModel):
 class TransportChaosRequest(BaseModel):
     transport: str
     available: bool
+
+class ShareSkillRequest(BaseModel):
+    skill_id: str
+    cohort: str
 
 @app.post("/observe/ingest")
 def ingest(payload: Ingest):
@@ -244,3 +250,26 @@ def set_transport_state(req: TransportChaosRequest):
 @app.get("/transports/status")
 def transport_status():
     return BROKER.status()
+
+@app.get("/skills")
+def list_skills(session_id: str, cohort: str | None = None):
+    scope = {"tenant":"demo","project":"demo","user":session_id}
+    if not CONSENTS.has_consent(scope["tenant"], scope["project"], scope["user"]):
+        raise HTTPException(status_code=403, detail="Consent required to view skills")
+    SKILLS.sync(GRAPH.get_skills())
+    return {"skills": SKILLS.list(cohort)}
+
+@app.post("/skills/share")
+def share_skill(req: ShareSkillRequest):
+    SKILLS.sync(GRAPH.get_skills())
+    if not SKILLS.share(req.skill_id, req.cohort):
+        raise HTTPException(status_code=404, detail="Unknown skill")
+    AUDIT.append(
+        {
+            "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "skill_id": req.skill_id,
+            "action": "share",
+            "cohort": req.cohort,
+        }
+    )
+    return {"ok": True}
