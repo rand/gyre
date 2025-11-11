@@ -13,6 +13,7 @@ class TemporalGraph:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.G = nx.MultiDiGraph()
         self.cache: Dict[str, Dict[str, Any]] = {}
+        self.skills: Dict[str, Dict[str, Any]] = {}
         self._load()
 
     def upsert_item(self, item: Dict[str, Any]):
@@ -59,21 +60,51 @@ class TemporalGraph:
             self._persist()
         return len(to_remove)
 
+    def compute_skill_candidates(self, min_references: int = 2) -> List[Dict[str, Any]]:
+        candidates: List[Dict[str, Any]] = []
+        for node_id, attrs in self.G.nodes(data=True):
+            references = attrs.get("references", 0)
+            if references >= min_references:
+                candidates.append({
+                    "id": node_id,
+                    "references": references,
+                    "content": attrs.get("content"),
+                })
+        return candidates
+
+    def promote_skills(self, min_references: int = 2) -> int:
+        promoted = 0
+        for candidate in self.compute_skill_candidates(min_references):
+            if candidate["id"] not in self.skills:
+                self.skills[candidate["id"]] = candidate
+                promoted += 1
+        if promoted:
+            self._persist()
+        return promoted
+
     def snapshot(self) -> Dict[str, Any]:
         return nx.node_link_data(self.G.copy())
 
     def _persist(self) -> None:
-        data = nx.node_link_data(self.G)
-        self.path.write_text(json.dumps(data), encoding="utf-8")
+        payload = {
+            "graph": nx.node_link_data(self.G),
+            "skills": self.skills,
+        }
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
 
     def _load(self) -> None:
         if not self.path.exists():
             return
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            self.G = nx.node_link_graph(data, directed=True, multigraph=True)
+            if isinstance(data, dict) and "graph" in data:
+                self.G = nx.node_link_graph(data["graph"], directed=True, multigraph=True)
+                self.skills = data.get("skills", {})
+            else:
+                self.G = nx.node_link_graph(data, directed=True, multigraph=True)
         except Exception:
             self.G = nx.MultiDiGraph()
+            self.skills = {}
 
 
 def _parse_ts(value: Any) -> datetime | None:
