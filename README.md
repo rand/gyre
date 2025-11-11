@@ -28,7 +28,7 @@ Gyre is a proactive memory supervisor for AI agents. It **observes** every turn 
 | **Transports** | Broker CPP payloads into provider transports with health/chaos controls. | `gyre/transports/broker.py`, `/patches/inject`, `/transports/status` |
 | **Evaluation & Tooling** | Replay traces, generate datasets, reviewer console. | `scripts/evaluate_selection.py`, `scripts/reviewer_cli.py`, `tests/*` |
 
-Gyre’s product intent, spec, and architecture live in `PRD.md`, `SPEC.md`, and `ARCHITECTURE.md`. Those documents set the precedent order; match code to the PRD first.
+Gyre’s product intent, spec, and architecture live in `docs/PRD.md`, `docs/SPEC.md`, and `docs/ARCHITECTURE.md`. Those documents set the precedent order; match code to the PRD first.
 
 ---
 
@@ -75,8 +75,7 @@ curl -X POST http://localhost:8000/patches/inject \
 ## Project Layout
 
 ```
-├── AGENTS.md                 # Contributor guide (coding conventions, beads workflow)
-├── PRD.md / SPEC.md / ARCHITECTURE.md
+├── docs/PRD.md / docs/SPEC.md / docs/ARCHITECTURE.md / docs/AGENTS.md
 ├── gyre/
 │   ├── observer.py / planner.py / selector.py / composer.py
 │   ├── stores/               # Private store + temporal graph prototype
@@ -133,7 +132,7 @@ CLI helpers:
 
 ## Development Workflow
 
-1. **Docs First**: PRD → SPEC → ARCHITECTURE → README/AGENTS. Align changes with the documents (open a beads issue if they diverge).
+1. **Docs First**: docs/PRD → docs/SPEC → docs/ARCHITECTURE → README/docs/AGENTS. Align changes with the documents (open a beads issue if they diverge).
 2. **Environment**: use `uv` for installs/tests (`uv run pytest -q`). Secrets live in `.env`.
 3. **Issue Tracking**: run `bd quickstart` for the Beads workflow. Create tasks (`bd create "feat"`), model dependencies (`bd dep add`), and keep statuses updated (`bd update issue --status in_progress`).  
 4. **Coding Guidelines**: Python ≥3.10, type hints, four-space indent. Prefer composition over inheritance; update or create `tests/test_<module>.py` alongside code changes.

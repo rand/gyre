@@ -231,7 +231,7 @@ Fallback deterministic heuristics mirror existing stubs (`gyre/observer.py`, `gy
 - `uv`-based workflows: `make setup|run|test|lint|seed`.  
 - Scenario simulator to stream recorded sessions and inspect selection traces.  
 - Labeling toolkit for DSPy datasets (front-end or CLI).  
-- Documentation updates: `AGENTS.md` (contributor guide), new PRD/SPEC references.
+- Documentation updates: `docs/AGENTS.md` (contributor guide), new PRD/SPEC references.
 
 ## 10. Migration Notes
 - Legacy docs retained in `archive/`.  

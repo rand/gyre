@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Source lives in `gyre/`, split by responsibility (`selector.py`, `retriever.py`, transports, stores, `taps/` adapters). FastAPI orchestration sits in `server/` via `server/run_dev_server.py`. Shared utilities (dataset seeding, maintenance jobs, trace replay) are under `scripts/`. Tests belong in `tests/` and mirror the package they cover (e.g., `tests/test_selector.py`). Strategy docs live in `ARCHITECTURE.md`, `PRD.md`, and `SPEC.md`—skim them before touching flows.
+Source lives in `gyre/`, split by responsibility (`selector.py`, `retriever.py`, transports, stores, `taps/` adapters). FastAPI orchestration sits in `server/` via `server/run_dev_server.py`. Shared utilities (dataset seeding, maintenance jobs, trace replay) are under `scripts/`. Tests belong in `tests/` and mirror the package they cover (e.g., `tests/test_selector.py`). Strategy docs live in `docs/ARCHITECTURE.md`, `docs/PRD.md`, and `docs/SPEC.md`—skim them before touching flows.
 
 ## Build, Test, and Development Commands
 Use `uv` for every workflow to keep dependencies reproducible:
@@ -18,9 +18,9 @@ Use `uv` for every workflow to keep dependencies reproducible:
 
 ## Documentation Stack & Precedence
 Treat the documents as a cascade for intent and implementation detail:
-- `PRD.md` (current vision) defines *why* and the business outcomes. This takes precedence over all other local docs.
-- `SPEC.md` translates the PRD into APIs, schemas, and constraints. If a spec contradicts architecture/code, update the spec first.
-- `ARCHITECTURE.md` explains how we intend to fulfill the spec; adjust it whenever the design drifts.
+- `docs/PRD.md` (current vision) defines *why* and the business outcomes. This takes precedence over all other local docs.
+- `docs/SPEC.md` translates the PRD into APIs, schemas, and constraints. If a spec contradicts architecture/code, update the spec first.
+- `docs/ARCHITECTURE.md` explains how we intend to fulfill the spec; adjust it whenever the design drifts.
 - `README.md` and this guide capture contributor workflows; keep them synced after spec/architecture edits.
 When in doubt, escalate differences instead of silently diverging—link beads issues to the doc/section you plan to change.
 
