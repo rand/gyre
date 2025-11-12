@@ -6,6 +6,5 @@ __pycache__/
 data/audit.log
 data/consent.json
 data/graph.json
-
-data/skills.json
 data/logs/
+data/skills.json

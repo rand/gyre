@@ -15,6 +15,7 @@ Use `uv` for every workflow to keep dependencies reproducible:
 - `uv run python scripts/reviewer_cli.py export --session demo --candidates evt:demo:1,evt:demo:2` captures manual CPP payloads after Stage A/B selection.
 - `uv run python scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 800 --budget-latency 800` replays recorded candidates through the planner/selector pipeline and reports ledger stats.
 - `uv run python scripts/promote_skills.py --min-references 3` promotes high-signal nodes into the skill registry; pair with the `GET /skills` / `POST /skills/share` endpoints to debug cohort sharing.
+- `DSPY_MOCK=1 uv run python scripts/compile_dspy.py --data-dir data/train` compiles DSPy modules against logged datasets; follow with `uv run python scripts/evaluate_dspy.py --log data/logs/propose.jsonl` to inspect Stage A/B averages.
 - `POST /patches/inject` (or call via `curl`/tools) exercises the transport broker; pass `{"patch": {...}, "transport": "openai"}` using patches produced by `/patches/propose`.
 
 ## Documentation Stack & Precedence

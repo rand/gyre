@@ -130,6 +130,7 @@ CLI helpers:
 - `scripts/evaluate_selection.py` — offline Stage A/B evaluation harness.
 - `scripts/consolidate_graph.py` — prune stale nodes from the temporal graph (`--ttl-hours` defaults to 24) to keep persistence lean.
 - `scripts/promote_skills.py` — promote high-signal nodes into the skill registry and sync them for sharing.
+- `scripts/compile_dspy.py` / `scripts/evaluate_dspy.py` — compile DSPy programs from logged datasets and summarize Stage A/B performance; CI runs these in mock mode on every push.
 
 ---
 
