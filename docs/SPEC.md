@@ -66,7 +66,16 @@ Requests proactive assistance under explicit budgets.
   "mode": "proactive|respond"
 }
 ```
-Returns candidate IDs, selection reasons, CPP patches, and budget ledger.
+Returns candidate IDs, selection reasons, CPP patches, scope echo, and budget ledger:
+```json
+{
+  "patches": [...],
+  "scope": {"tenant": "acme", "project": "pilot", "user": "dev-42"},
+  "ledger": {"tokens_used": 480, "latency_ms": 420},
+  "stage_a": {...},
+  "trace": [...]
+}
+```
 
 ### POST /patches/inject
 ```json
@@ -82,9 +91,44 @@ Returns per-transport SLA metrics:
 ```json
 {
   "transports": {
-    "openai": {"success": 12, "failure": 1, "avg_latency_ms": 210.4, "last_latency_ms": 198.2, "last_error": null},
-    "anthropic": {"success": 10, "failure": 2, "avg_latency_ms": 280.0, "last_latency_ms": 310.5, "last_error": "503: overload"}
+    "openai": {
+      "success": 12,
+      "failure": 1,
+      "avg_latency_ms": 210.4,
+      "last_latency_ms": 198.2,
+      "last_error": null,
+      "scopes": [
+        {"tenant": "acme", "project": "pilot", "success": 8, "failure": 0, "last_latency_ms": 180.0, "last_error": null},
+        {"tenant": "acme", "project": "internal", "success": 4, "failure": 1, "last_latency_ms": 220.0, "last_error": "503: overload"}
+      ]
+    },
+    "anthropic": {"success": 10, "failure": 2, "avg_latency_ms": 280.0, "last_latency_ms": 310.5, "last_error": "503: overload", "scopes": []}
   }
+}
+```
+
+### GET /health/transports
+Returns availability, cooldowns, scope-level metrics, and sanitized config summary:
+```json
+{
+  "status": "degraded",
+  "transports": [
+    {
+      "name": "openai",
+      "available": false,
+      "failures": 2,
+      "cooldown_seconds": 1.5,
+      "metrics": {
+        "success": 12,
+        "failure": 2,
+        "avg_latency_ms": 210.4,
+        "last_latency_ms": 500.0,
+        "last_error": "rate limit",
+        "scopes": [{"tenant": "acme", "project": "pilot", "success": 8, "failure": 2, "last_latency_ms": 500.0, "last_error": "rate limit"}]
+      }
+    }
+  ],
+  "config": {"tenants": {"demo": {"providers": {"openai": true, "anthropic": true, "gemini": true}, "projects": ["pilot"]}}}
 }
 ```
 

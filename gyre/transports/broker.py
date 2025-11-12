@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 from gyre.metrics_exporter import (
@@ -74,12 +74,22 @@ class GeminiTransport(BaseTransport):
 
 
 @dataclass
+@dataclass
+class ScopeStats:
+    success: int = 0
+    failure: int = 0
+    last_error: str | None = None
+    last_latency_ms: float = 0.0
+
+
+@dataclass
 class TransportStats:
     success: int = 0
     failure: int = 0
     latency_ms_total: float = 0.0
     latency_ms_last: float = 0.0
     last_error: str | None = None
+    scopes: Dict[Tuple[str, str], ScopeStats] = field(default_factory=dict)
 
     @property
     def avg_latency_ms(self) -> float:
@@ -91,19 +101,33 @@ class TransportMetrics:
         self._lock = threading.Lock()
         self._stats: Dict[str, TransportStats] = {}
 
-    def record_success(self, name: str, latency_ms: float) -> None:
+    def _scope_key(self, tenant: str, project: Optional[str]) -> Tuple[str, str]:
+        return tenant, project or ""
+
+    def record_success(self, name: str, latency_ms: float, tenant: str, project: Optional[str]) -> None:
         with self._lock:
             stat = self._stats.setdefault(name, TransportStats())
             stat.success += 1
             stat.latency_ms_total += latency_ms
             stat.latency_ms_last = latency_ms
             stat.last_error = None
+            key = self._scope_key(tenant, project)
+            scope_stat = stat.scopes.setdefault(key, ScopeStats())
+            scope_stat.success += 1
+            scope_stat.last_error = None
+            scope_stat.last_latency_ms = latency_ms
+        record_transport_success(name, tenant, project, latency_ms)
 
-    def record_failure(self, name: str, error: str) -> None:
+    def record_failure(self, name: str, error: str, tenant: str, project: Optional[str]) -> None:
         with self._lock:
             stat = self._stats.setdefault(name, TransportStats())
             stat.failure += 1
             stat.last_error = error
+            key = self._scope_key(tenant, project)
+            scope_stat = stat.scopes.setdefault(key, ScopeStats())
+            scope_stat.failure += 1
+            scope_stat.last_error = error
+        record_transport_failure(name, tenant, project)
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
@@ -115,6 +139,17 @@ class TransportMetrics:
                     "avg_latency_ms": round(stat.avg_latency_ms, 2),
                     "last_latency_ms": round(stat.latency_ms_last, 2),
                     "last_error": stat.last_error,
+                    "scopes": [
+                        {
+                            "tenant": tenant,
+                            "project": project or None,
+                            "success": scope_stat.success,
+                            "failure": scope_stat.failure,
+                            "last_latency_ms": round(scope_stat.last_latency_ms, 2),
+                            "last_error": scope_stat.last_error,
+                        }
+                        for (tenant, project), scope_stat in stat.scopes.items()
+                    ],
                 }
             return data
 
@@ -182,14 +217,12 @@ class TransportBroker:
             try:
                 ack = transport.send(patch, credentials=credentials)
                 latency_ms = (time.perf_counter() - start) * 1000
-                self.metrics.record_success(name, latency_ms)
-                record_transport_success(name, tenant, latency_ms)
+                self.metrics.record_success(name, latency_ms, tenant, project)
                 return {"transport": name, "ack": ack, "latency_ms": round(latency_ms, 2)}
             except Exception as exc:  # pragma: no cover - network/availability dependent
                 latency_ms = (time.perf_counter() - start) * 1000
                 error_str = str(exc)
-                self.metrics.record_failure(name, error_str)
-                record_transport_failure(name, tenant)
+                self.metrics.record_failure(name, error_str, tenant, project)
                 self.failures[name] = self.failures.get(name, 0) + 1
                 self.cooldowns[name] = time.time() + self.cooldown_seconds
                 errors.append({"transport": name, "error": error_str, "latency_ms": round(latency_ms, 2)})
@@ -219,6 +252,31 @@ class TransportBroker:
 
     def metrics_snapshot(self) -> Dict[str, Any]:
         return self.metrics.snapshot()
+    
+    def health(self) -> Dict[str, Any]:
+        now = time.time()
+        metrics = self.metrics.snapshot()
+        transports_info: List[Dict[str, Any]] = []
+        for name, transport in self.transports.items():
+            transports_info.append(
+                {
+                    "name": name,
+                    "available": getattr(transport, "available", True),
+                    "failures": self.failures.get(name, 0),
+                    "cooldown_seconds": max(self.cooldowns.get(name, 0) - now, 0.0),
+                    "metrics": metrics.get(name, {}),
+                }
+            )
+        status = "ok"
+        if any((not info["available"]) or info["failures"] > 0 for info in transports_info):
+            status = "degraded"
+        if not transports_info:
+            status = "unknown"
+        return {
+            "status": status,
+            "transports": transports_info,
+            "config": self.config.summary() if self.config else {},
+        }
 
     def _check_quota(self, tenant: str, project: Optional[str], transport_name: str) -> bool:
         if not self.config:

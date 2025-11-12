@@ -18,6 +18,7 @@ class DatasetLogger:
         patch: Dict[str, Any],
         *,
         pool: List[Dict[str, Any]] | None = None,
+        scope: Dict[str, Any] | None = None,
     ) -> None:
         payload_dict = _to_dict(payload)
         entry = {
@@ -27,6 +28,7 @@ class DatasetLogger:
             "stage_a": stage_a,
             "selection": selection,
             "patch": patch,
+            "scope": scope or {},
         }
         if pool is not None:
             entry["pool"] = pool

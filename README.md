@@ -124,11 +124,12 @@ Use `scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 6
 | --- | --- |
 | `POST /observe/ingest` | Ingest tap batches, output task state + novelty report. |
 | `POST /sessions/register` | Register a session's tenant/project/user scope before observe/propose/inject. |
-| `POST /patches/propose` | Run Stage A/B under explicit budgets; returns patch, Stage‑A ledger, Stage‑B ledger, and trace. |
+| `POST /patches/propose` | Run Stage A/B under explicit budgets; returns patch, scope echo, Stage‑A ledger, Stage‑B ledger, and trace. |
 | `POST /patches/inject` | Inject a patch through the broker (requires prior consent). |
 | `GET /review/candidates` / `POST /review/export_patch` / `GET /review/audit` | Reviewer workflow for manual CPP exports and audits. |
 | `POST /governance/consent` | Record tenant/project/user consent. |
 | `POST /transports/chaos` / `GET /transports/status` | Toggle transport availability and view health/cooldown metrics. |
+| `GET /health/transports` | Summaries of transport availability, cooldowns, per tenant/project metrics, plus config coverage. |
 | `GET /metrics/transports` | Per-transport SLA snapshot (success/failure counts, latency, last error). |
 | `GET /metrics/observer` / `GET /metrics/dspy` | Observe→ingest telemetry plus Stage A/B token averages. |
 | `GET /metrics/prometheus` | Prometheus scrape endpoint (all metrics). |
@@ -147,8 +148,16 @@ CLI helpers:
 - `scripts/promote_skills.py` — promote high-signal nodes into the skill registry and sync them for sharing.
 - `scripts/log_examples.py --log data/logs/propose.jsonl --out data/train` — extract DSPy training datasets (ranker inputs/outputs, summaries) from the `DatasetLogger` file.
 - `scripts/build_dspy_datasets.py --log data/logs/propose.jsonl --out data/train` or `make datasets` — canonical Stage A/B dataset builder that emits `rank|sum|ev|red|blue_{train,eval}.jsonl` (includes host feedback weights when `data/feedback.jsonl` exists).
+- `scripts/run_learning_cycle.sh [log] [data_dir]` — one-shot automation that builds datasets, compiles DSPy modules, and runs evaluation for the specified log. Respects `DSPY_ACCEPTED_WEIGHT`, `DSPY_REJECTED_WEIGHT`, `DSPY_DEFAULT_WEIGHT`, and `DSPY_NEGATIVE_SAMPLES` (or pass the equivalent flags to `scripts/build_dspy_datasets.py`) and writes `data/learning_cycle.json` (override with `LEARNING_META_PATH`) so Prometheus can track the last successful run.
+- `scripts/gyre_cli.py` — Typer-based CLI (`uv run python scripts/gyre_cli.py --help`) that guides you through session registration, ingest/propose/inject flows, config validation, onboarding (auto-runs `validate-configs` unless `--no-validate`), learning-cycle automation, and transport health checks (rich summary by default, `--raw` for JSON) plus an interactive `guide` command. See `docs/CLI-UX.md` for usage and troubleshooting.
+- `uv run python scripts/gyre_cli.py validate-configs --tenant demo --project pilot` validates your transports/pilot configs and prints actionable fixes.
 - `scripts/compile_dspy.py` / `scripts/evaluate_dspy.py` — compile DSPy programs from logged datasets and summarize Stage A/B performance; CI runs these in mock mode on every push.
 - `scripts/run_tests.sh` — deterministic test runner that prefers `.venv/bin/python -m pytest -q` and only falls back to `uv run` when no local venv exists.
+
+### Dashboards & Health Checks
+- Import `grafana/dashboards/gyre-pilot.json` into Grafana (see `docs/OBSERVABILITY.md`) to visualize selection tokens, transport latency/error rates, and pilot consent coverage; alert rules live in `scripts/prometheus/gyre.rules.yml`.
+- Use `gyre transport-health` for a quick terminal view into `/health/transports` (availability, cooldowns, tenant/project stats); pass `--raw` when you need the JSON for automation.
+- For pilot onboarding, run `gyre onboard-partner --tenant <name> --project <name>` and let the CLI immediately run `gyre validate-configs` so you see transport credential gaps before shipping configs.
 
 ---
 
@@ -170,6 +179,8 @@ CLI helpers:
 - Offline selection analysis: `scripts/evaluate_selection.py` surfaces Stage A/B ledger stats for any recorded trace.
 - Chaos: `POST /transports/chaos` lets you simulate transport outages to ensure fallbacks + cooldowns behave.
 - DSPy training workflow: `DSPY_MOCK=1 ./scripts/run_tests.sh` for fast unit coverage, `scripts/build_dspy_datasets.py --log data/logs/propose.jsonl --out data/train` to refresh training corpora, followed by `DSPY_MOCK=0 uv run python scripts/compile_dspy.py --data-dir data/train` and `uv run python scripts/evaluate_dspy.py --log data/logs/propose.jsonl` when you're ready to benchmark real models.
+- Feedback weighting & negatives: set `DSPY_ACCEPTED_WEIGHT`, `DSPY_REJECTED_WEIGHT`, `DSPY_DEFAULT_WEIGHT`, and `DSPY_NEGATIVE_SAMPLES` (or pass the equivalent flags to `scripts/build_dspy_datasets.py`) to control how verdicts influence training data. Each successful learning cycle writes `data/learning_cycle.json`, powering the `gyre_learning_last_run_timestamp` Prometheus gauge.
+- GitHub Actions `nightly-learning.yml` runs `scripts/run_learning_cycle.sh` on a 07:30 UTC cron with `LEARNING_REPORT_PATH=dist/learning/metrics.json`, then uploads `data/train/`, `data/dspy_cache/`, and `dist/learning/` artifacts so you can review dataset diffs and evaluation summaries in the Actions UI.
 - Transport production workflow: copy `config/transports.example.json`, fill in tenant/project credentials + `rate_limit_per_min`, unset `GYRE_TRANSPORT_FORCE_STUB`, register sessions via `/sessions/register`, and monitor `/metrics/transports`, `/metrics/prometheus`, and `/transports/status` (scrape Prometheus using `scripts/prometheus/gyre.rules.yml` for sample alerts) while piloting with external hosts.
 
 ---
@@ -181,10 +192,12 @@ CLI helpers:
 - **M4**: Adaptive DSPy learning loops and automated evaluation harnesses.
 - **M7 (in planning)**: Pilot readiness with multi-tenant transport configuration, SLA telemetry, and host feedback loops.
 
-Research references: `RESEARCH-REFERENCES.md` aggregates the papers (ACE, DSPy, GraphRAG, etc.) that informed this design. Operational guidance lives in `docs/OBSERVABILITY.md` (Prometheus scraping, alert rules, and future OTel hooks).
+Research references: `RESEARCH-REFERENCES.md` aggregates the papers (ACE, DSPy, GraphRAG, etc.) that informed this design. Operational guidance lives in `docs/OBSERVABILITY.md` (Prometheus scraping, alert rules, and future OTel hooks). Pilot onboarding steps are in `docs/PILOT-ONBOARDING.md`. Nightly learning automation guidance is in `docs/LEARNING-AUTOMATION.md`.
 
 ---
 
 Gyre is built to be extended: replace the stub transports with real ones, wire your observability stack into the telemetry endpoints, and iterate on the planner/selector using the evaluation harness. Contributions that keep efficacy-per-token high and policies airtight are welcome.
-- `scripts/prometheus/gyre.rules.yml` — sample Prometheus alert rules for transport latency and error budgets (copy into your infra if you’re monitoring pilots).
+- `scripts/prometheus/gyre.rules.yml` — sample Prometheus alert rules for transport latency/error budgets, consent gaps, and stale learning cycles (copy into your infra if you’re monitoring pilots).
 - `scripts/validate_pilot.py --config-dir config` — sanity-check `config/transports.json` and `config/pilot_cohorts.json` before enabling external pilots.
+- `python scripts/onboard_partner.py --tenant <name> --project <name> --openai-key ...` — bootstrap pilot configs from the CLI (see `docs/PILOT-ONBOARDING.md`).
+- Import `grafana/dashboards/gyre-pilot.json` into Grafana to visualize transport latency/error rates and selection tokens for each pilot tenant (run `make dashboards` to copy both the dashboard JSON and alert rules into `dist/observability/`).

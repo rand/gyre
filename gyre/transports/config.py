@@ -59,3 +59,16 @@ class TransportConfig:
     def rate_limit(self, tenant: str, project: Optional[str], transport: str) -> Optional[int]:
         entry = self._lookup(tenant, project, transport)
         return entry.quota() if entry else None
+
+    def summary(self) -> Dict[str, Any]:
+        tenants = {}
+        data = self._data or {}
+        for tenant, cfg in data.get("tenants", {}).items():
+            providers = {}
+            for provider in ("openai", "anthropic", "gemini"):
+                providers[provider] = bool(cfg.get(provider, {}).get("api_key"))
+            tenants[tenant] = {
+                "providers": providers,
+                "projects": list(cfg.get("projects", {}).keys()),
+            }
+        return {"tenants": tenants}

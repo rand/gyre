@@ -24,18 +24,28 @@ if Counter:
     TRANSPORT_SUCCESS = Counter(
         "gyre_transport_success_total",
         "Transport successes",
-        ["transport", "tenant"],
+        ["transport", "tenant", "project"],
     )
     TRANSPORT_FAILURE = Counter(
         "gyre_transport_failure_total",
         "Transport failures",
-        ["transport", "tenant"],
+        ["transport", "tenant", "project"],
     )
     TRANSPORT_LATENCY = Histogram(
         "gyre_transport_latency_ms",
         "Transport latency in milliseconds",
-        ["transport", "tenant"],
+        ["transport", "tenant", "project"],
         buckets=(25, 50, 100, 200, 400, 800, 1600),
+    )
+    CONSENT_MISSING = Counter(
+        "gyre_consent_missing_total",
+        "Number of patch injections blocked due to missing consent",
+        ["tenant", "project"],
+    )
+    LEARNING_LAST_RUN = Gauge(
+        "gyre_learning_last_run_timestamp",
+        "Unix timestamp of the last successful learning cycle",
+        [],
     )
 
 
@@ -52,14 +62,32 @@ def record_selection(tenant: str, tokens_used: int) -> None:
     SELECTION_TOKENS.labels(tenant=tenant).set(tokens_used)
 
 
-def record_transport_success(transport: str, tenant: str, latency_ms: float) -> None:
-    if not Counter:
-        return
-    TRANSPORT_SUCCESS.labels(transport=transport, tenant=tenant).inc()
-    TRANSPORT_LATENCY.labels(transport=transport, tenant=tenant).observe(latency_ms)
+def _project_label(project: str | None) -> str:
+    return project or "default"
 
 
-def record_transport_failure(transport: str, tenant: str) -> None:
+def record_transport_success(transport: str, tenant: str, project: str | None, latency_ms: float) -> None:
     if not Counter:
         return
-    TRANSPORT_FAILURE.labels(transport=transport, tenant=tenant).inc()
+    label = _project_label(project)
+    TRANSPORT_SUCCESS.labels(transport=transport, tenant=tenant, project=label).inc()
+    TRANSPORT_LATENCY.labels(transport=transport, tenant=tenant, project=label).observe(latency_ms)
+
+
+def record_transport_failure(transport: str, tenant: str, project: str | None) -> None:
+    if not Counter:
+        return
+    label = _project_label(project)
+    TRANSPORT_FAILURE.labels(transport=transport, tenant=tenant, project=label).inc()
+
+
+def record_missing_consent(tenant: str, project: str | None) -> None:
+    if not Counter:
+        return
+    CONSENT_MISSING.labels(tenant=tenant, project=_project_label(project)).inc()
+
+
+def record_learning_last_run(timestamp: float) -> None:
+    if not Counter:
+        return
+    LEARNING_LAST_RUN.set(timestamp)

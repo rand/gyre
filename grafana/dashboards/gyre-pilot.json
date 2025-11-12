@@ -1,0 +1,39 @@
+{
+  "title": "Gyre Pilot Overview",
+  "panels": [
+    {
+      "title": "Transport Latency (ms)",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "gyre_transport_latency_ms_sum / gyre_transport_latency_ms_count",
+          "legendFormat": "{{transport}}/{{tenant}}"
+        }
+      ]
+    },
+    {
+      "title": "Transport Error Rate",
+      "type": "graph",
+      "targets": [
+        {
+          "expr": "rate(gyre_transport_failure_total[5m]) / clamp_min(rate(gyre_transport_success_total[5m]), 1e-6)",
+          "legendFormat": "{{transport}}/{{tenant}}"
+        }
+      ]
+    },
+    {
+      "title": "Selection Tokens Used",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "gyre_selection_tokens_last",
+          "legendFormat": "{{tenant}}"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 37,
+  "editable": true,
+  "style": "dark",
+  "tags": ["gyre", "pilot"]
+}

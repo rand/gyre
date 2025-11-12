@@ -9,8 +9,8 @@ Use `uv` for every workflow to keep dependencies reproducible:
 - `uv run python server/run_dev_server.py` (or `make run`) starts the FastAPI dev server with hot reload.
 - `make test` (or `./scripts/run_tests.sh`) runs the suite via `.venv/bin/python -m pytest -q` with `DSPY_MOCK=1` and `GYRE_TRANSPORT_FORCE_STUB=1`, avoiding both the macOS SystemConfiguration panic and accidental real transport calls.
 - `uv run python scripts/seed_datasets.py` (or `make seed`) refreshes `data/train/` so DSPy optimizers have sample traces.
-- `cp config/transports.example.json config/transports.json` before piloting so each tenant/project has explicit provider keys + `rate_limit_per_min` entries (keep the real file out of git; leave `GYRE_TRANSPORT_FORCE_STUB=1` on if you want to remain offline).
-- `cp config/pilot_cohorts.example.json config/pilot_cohorts.json` if you need rollout gating; scopes outside the allowlist will receive 403s from `/patches/propose` and `/patches/inject`.
+- `python scripts/onboard_partner.py --tenant demo --project pilot --openai-key ...` bootstraps `config/transports.json` + `config/pilot_cohorts.json` for a tenant/project (repeat per partner instead of editing JSON manually).
+- `python scripts/validate_pilot.py --config-dir config` double-checks configs before enabling proactive injections; it ensures API keys + rate limits exist and pilot cohorts allow the tenant/project.
 - `uv run python scripts/replay_session.py --session demo --trace traces/example.jsonl` replays saved traces through `/observe/ingest`.
 - `curl -X POST /sessions/register` (or similar) should be called before ingest/propose/inject so each session is associated with the correct tenant/project/user scope.
 - `uv run python scripts/pipe_provider_events.py --provider openai --session demo --trace logs/openai.jsonl` converts provider logs (OpenAI/Anthropic) into ingest events.
@@ -18,6 +18,7 @@ Use `uv` for every workflow to keep dependencies reproducible:
 - `uv run python scripts/reviewer_cli.py export --session demo --candidates evt:demo:1,evt:demo:2` captures manual CPP payloads after Stage A/B selection.
 - `uv run python scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 800 --budget-latency 800` replays recorded candidates through the planner/selector pipeline and reports ledger stats.
 - `uv run python scripts/promote_skills.py --min-references 3` promotes high-signal nodes into the skill registry; pair with the `GET /skills` / `POST /skills/share` endpoints to debug cohort sharing.
+- `uv run python scripts/gyre_cli.py guide` walks through session registration → ingest → propose interactively; see `docs/CLI-UX.md` for all CLI commands (consent, onboarding, learning cycle) and troubleshooting tips.
 - `DSPY_MOCK=1 uv run python scripts/compile_dspy.py --data-dir data/train` compiles DSPy modules against logged datasets; follow with `uv run python scripts/evaluate_dspy.py --log data/logs/propose.jsonl` to inspect Stage A/B averages.
 - `scripts/build_dspy_datasets.py --log data/logs/propose.jsonl --out data/train` (or `make datasets`) materializes canonical datasets (`rank|sum|ev|red|blue_{train,eval}.jsonl`) before you compile DSPy modules; check the JSON summary for coverage ratios.
 - Feature flags live in `data/feature_flags.json` and can be toggled via `POST /feature_flags?name=dspy_logging&value=false` (used to pause logging or enable DSPy injections); set `dspy_selection=true` to route Stage B ordering through the DSPy ranker.

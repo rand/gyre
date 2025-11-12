@@ -20,21 +20,3 @@ groups:
         annotations:
           summary: "Gyre transport error budget exceeded ({{ $labels.transport }})"
           description: "Failure rate exceeded 5% for {{ $labels.transport }} (tenant={{ $labels.tenant }}). Investigate pilot health."
-
-      - alert: GyreConsentMissing
-        expr: increase(gyre_consent_missing_total[5m]) > 0
-        for: 1m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Gyre consent missing for {{ $labels.tenant }}/{{ $labels.project }}"
-          description: "Patch injections are being blocked because consent is missing. Run `gyre give-consent` or onboard the tenant."
-
-      - alert: GyreLearningStale
-        expr: time() - gyre_learning_last_run_timestamp > 21600
-        for: 15m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Gyre learning cycle stale"
-          description: "No successful DSPy learning cycle recorded in the last 6h. Check nightly workflow logs and rerun `gyre learning-cycle`."

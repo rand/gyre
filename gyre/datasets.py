@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Set
 
 
 def load_entries(path: Path) -> List[Dict[str, Any]]:
@@ -38,7 +38,22 @@ def partition(key: str, train_ratio: float) -> str:
     return "train" if bucket < train_ratio else "eval"
 
 
-def build_rank_record(entry: Dict[str, Any], max_items: int, feedbacks: Dict[str, Dict[str, Any]]) -> Dict[str, Any] | None:
+def _stable_sample(ids: List[str], count: int) -> List[str]:
+    if count <= 0:
+        return []
+    ids = sorted(ids, key=lambda cid: hashlib.sha256(cid.encode("utf-8")).hexdigest())
+    return ids[:count]
+
+
+def build_rank_record(
+    entry: Dict[str, Any],
+    max_items: int,
+    feedbacks: Dict[str, Dict[str, Any]],
+    *,
+    feedback_weights: Dict[str, float],
+    default_weight: float,
+    negative_samples: int,
+) -> Dict[str, Any] | None:
     pool = entry.get("pool") or []
     if not pool:
         return None
@@ -49,16 +64,36 @@ def build_rank_record(entry: Dict[str, Any], max_items: int, feedbacks: Dict[str
     ]
     patch_id = entry.get("patch", {}).get("id")
     feedback = feedbacks.get(patch_id or "") if patch_id else None
-    return {
+    verdict = (feedback or {}).get("verdict")
+    verdict_lower = verdict.lower() if isinstance(verdict, str) else None
+    positive_set: Set[str] = set(pid for pid in selected_ids if pid)
+    negative_ids: List[str] = []
+    if verdict_lower == "rejected" and negative_samples > 0:
+        candidates = [
+            item.get("id")
+            for item in pool[:max_items]
+            if item.get("id") and item.get("id") not in positive_set
+        ]
+        negative_ids = _stable_sample([cid for cid in candidates if cid], negative_samples)
+    weight = (
+        feedback_weights.get(verdict_lower, default_weight)
+        if verdict_lower
+        else default_weight
+    )
+    record = {
         "task_desc": entry.get("task_desc", ""),
         "session_id": entry.get("session_id"),
         "budgets": entry.get("budgets", {}),
         "items": pool[:max_items],
         "positive_ids": selected_ids,
-        "verdict": (feedback or {}).get("verdict"),
-        "weight": 1.0 if not feedback else (1.0 if feedback.get("verdict") == "accepted" else 0.25),
+        "verdict": verdict_lower,
+        "weight": weight,
         "trace": entry.get("selection", {}).get("trace", []),
+        "scope": entry.get("scope", {}),
     }
+    if negative_ids:
+        record["negative_ids"] = negative_ids
+    return record
 
 
 def build_summary_rows(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -135,9 +170,13 @@ def build_datasets(
     *,
     train_ratio: float,
     max_items: int,
-    feedbacks: Dict[str, Dict[str, Any]] | None = None,
+    feedbacks: Optional[Dict[str, Dict[str, Any]]] = None,
+    feedback_weights: Optional[Dict[str, float]] = None,
+    default_weight: float = 1.0,
+    negative_samples: int = 0,
 ) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Any]]:
     feedbacks = feedbacks or {}
+    feedback_weights = feedback_weights or {"accepted": 1.0, "rejected": 0.25}
     datasets: Dict[str, List[Dict[str, Any]]] = {
         "rank_train": [],
         "rank_eval": [],
@@ -152,7 +191,7 @@ def build_datasets(
     }
     stats = {
         "entries": 0,
-        "rank": {"train": 0, "eval": 0, "avg_positive": 0.0, "accepted": 0, "rejected": 0},
+        "rank": {"train": 0, "eval": 0, "avg_positive": 0.0, "accepted": 0, "rejected": 0, "avg_negatives": 0.0},
         "sum": {"rows": 0},
         "ev": {"rows": 0, "exec_rate": 0.0},
         "red": {"rows": 0},
@@ -161,13 +200,22 @@ def build_datasets(
     total_positive = 0
     total_ev = 0
     executed_labels = 0
+    total_negatives = 0
+    negative_records = 0
 
     for entry in entries:
         stats["entries"] += 1
         key = entry.get("session_id") or entry.get("task_desc", "")
         split = partition(key, train_ratio)
 
-        rank_record = build_rank_record(entry, max_items, feedbacks)
+        rank_record = build_rank_record(
+            entry,
+            max_items,
+            feedbacks,
+            feedback_weights=feedback_weights,
+            default_weight=default_weight,
+            negative_samples=negative_samples,
+        )
         if rank_record and rank_record["items"]:
             datasets[f"rank_{split}"].append(rank_record)
             stats["rank"][split] += 1
@@ -175,6 +223,10 @@ def build_datasets(
             verdict = (rank_record.get("verdict") or "").lower()
             if verdict in ("accepted", "rejected"):
                 stats["rank"][verdict] += 1
+            negatives = rank_record.get("negative_ids") or []
+            if negatives:
+                total_negatives += len(negatives)
+                negative_records += 1
 
         sum_rows = build_summary_rows(entry)
         datasets[f"sum_{split}"].extend(sum_rows)
@@ -198,6 +250,9 @@ def build_datasets(
         total_positive / max(1, stats["rank"]["train"] + stats["rank"]["eval"])
     )
     stats["ev"]["exec_rate"] = executed_labels / max(1, total_ev)
+    stats["rank"]["avg_negatives"] = (
+        total_negatives / max(1, negative_records)
+    )
     return datasets, stats
 
 
@@ -214,8 +269,20 @@ def build_and_write(
     *,
     train_ratio: float,
     max_items: int,
+    feedbacks: Optional[Dict[str, Dict[str, Any]]] = None,
+    feedback_weights: Optional[Dict[str, float]] = None,
+    default_weight: float = 1.0,
+    negative_samples: int = 0,
 ) -> Dict[str, Any]:
-    datasets, stats = build_datasets(entries, train_ratio=train_ratio, max_items=max_items)
+    datasets, stats = build_datasets(
+        entries,
+        train_ratio=train_ratio,
+        max_items=max_items,
+        feedbacks=feedbacks,
+        feedback_weights=feedback_weights,
+        default_weight=default_weight,
+        negative_samples=negative_samples,
+    )
     for name, rows in datasets.items():
         write_jsonl(out_dir / f"{name}.jsonl", rows)
     return stats

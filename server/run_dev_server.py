@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Response, Request
 from pydantic import BaseModel
 from typing import List, Dict, Any
 import datetime as dt
+import json
 from pathlib import Path
 
 try:
@@ -29,7 +30,12 @@ from gyre.feature_flags import FeatureFlags
 from gyre.logger import DatasetLogger
 from gyre.metrics import summarize_propose_logs
 from gyre.dspy_ranker import DSPYRanker
-from gyre.metrics_exporter import record_observe as prom_record_observe, record_selection as prom_record_selection
+from gyre.metrics_exporter import (
+    record_observe as prom_record_observe,
+    record_selection as prom_record_selection,
+    record_missing_consent,
+    record_learning_last_run,
+)
 from gyre.feedback import FeedbackStore
 from gyre.pilot import PilotRollout
 from gyre.sessions import SessionRegistry
@@ -51,6 +57,7 @@ RANKER = DSPYRanker()
 FEEDBACK = FeedbackStore(DATA_DIR / "feedback.jsonl")
 PILOT = PilotRollout(CONFIG_DIR / "pilot_cohorts.json")
 SESSIONS = SessionRegistry()
+LEARNING_META_PATH = DATA_DIR / "learning_cycle.json"
 
 def build_fragments(task_desc: str, chosen: List[Dict[str, Any]], executed_tools: List[Dict[str, Any]]) -> Dict[str, str]:
     evidence = []
@@ -72,6 +79,25 @@ def build_fragments(task_desc: str, chosen: List[Dict[str, Any]], executed_tools
         "retrieved_evidence": "\n\n".join(evidence),
         "citations": "\n".join(citations),
     }
+
+
+def refresh_learning_metric():
+    if not LEARNING_META_PATH.exists():
+        return
+    try:
+        payload = json.loads(LEARNING_META_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    timestamp = payload.get("timestamp")
+    if timestamp is None:
+        iso = payload.get("last_run_iso")
+        if iso:
+            try:
+                timestamp = dt.datetime.fromisoformat(iso).timestamp()
+            except ValueError:
+                timestamp = None
+    if isinstance(timestamp, (int, float)):
+        record_learning_last_run(timestamp)
 
 class Ingest(BaseModel):
     session_id: str
@@ -220,6 +246,7 @@ def propose(p: Propose):
     response = {
         "patches": [patch],
         "ledger": selection["ledger"],
+        "scope": scope,
         "stage_a": {
             "executed": executed_ids,
             "executed_plan_ids": plan["executed_plan_ids"],
@@ -235,6 +262,7 @@ def propose(p: Propose):
             selection,
             patch,
             pool=pool,
+            scope=scope,
         )
     if selection.get("ranker"):
         response["ranker"] = selection["ranker"]
@@ -311,6 +339,7 @@ def inject_patch(req: InjectPatch):
     if not allowed:
         raise HTTPException(status_code=403, detail=message or "Pilot rollout disabled for this scope")
     if not CONSENTS.has_consent(scope["tenant"], scope["project"], scope["user"]):
+        record_missing_consent(scope["tenant"], scope.get("project"))
         raise HTTPException(status_code=403, detail="No consent on record for this scope")
     policy = POLICY.evaluate(req.patch, scope)
     if not policy["allowed"]:
@@ -333,6 +362,10 @@ def set_consent(req: ConsentRequest):
     CONSENTS.grant(req.tenant, req.project, req.user, req.consent)
     return {"ok": True}
 
+@app.get("/governance/consent")
+def list_consent():
+    return {"consents": CONSENTS.list_all()}
+
 @app.get("/feature_flags")
 def get_feature_flags():
     return {"flags": FLAGS.all()}
@@ -352,8 +385,13 @@ def set_transport_state(req: TransportChaosRequest):
 def transport_status():
     return BROKER.status()
 
+@app.get("/health/transports")
+def transport_health():
+    return BROKER.health()
+
 @app.get("/metrics/prometheus")
 def prometheus_metrics():
+    refresh_learning_metric()
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 @app.get("/skills")

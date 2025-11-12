@@ -1,0 +1,45 @@
+name: Nightly Learning
+
+on:
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch: {}
+
+env:
+  DSPY_MOCK: "1"
+  GYRE_TRANSPORT_FORCE_STUB: "1"
+
+jobs:
+  learning-cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: "latest"
+
+      - name: Provision Python
+        run: uv python install 3.11
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Run learning cycle
+        env:
+          LEARNING_REPORT_PATH: dist/learning/metrics.json
+        run: |
+          mkdir -p dist/learning
+          ./scripts/run_learning_cycle.sh data/logs/propose.jsonl data/train data/feedback.jsonl | tee dist/learning/learning-cycle.log
+
+      - name: Upload learning artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: learning-cycle-artifacts
+          path: |
+            data/train
+            data/dspy_cache
+            dist/learning
+          retention-days: 7

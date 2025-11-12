@@ -25,3 +25,6 @@ class ConsentRegistry:
 
     def has_consent(self, tenant: str, project: str, user: str) -> bool:
         return self.consents.get(self.key(tenant, project, user), False)
+
+    def list_all(self) -> Dict[str, bool]:
+        return dict(self.consents)

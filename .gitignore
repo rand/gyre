@@ -10,6 +10,7 @@ data/logs/
 data/skills.json
 data/feature_flags.json
 data/train/
+data/learning_cycle.json
 gyre.egg-info/
 config/transports.json
 config/pilot_cohorts.json

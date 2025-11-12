@@ -20,6 +20,12 @@ log:
 datasets:
 	uv run python scripts/build_dspy_datasets.py --log data/logs/propose.jsonl --out data/train
 
+dashboards:
+	mkdir -p dist/observability
+	cp grafana/dashboards/gyre-pilot.json dist/observability/
+	cp scripts/prometheus/gyre.rules.yml dist/observability/
+	@echo "Dashboard + alert files copied to dist/observability"
+
 compile-dspy:
 	DSPY_MOCK=1 uv run python scripts/compile_dspy.py --data-dir data/train
 
