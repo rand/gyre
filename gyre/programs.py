@@ -2,10 +2,16 @@ import os
 
 MOCK_DSPY = os.environ.get("DSPY_MOCK", "0") == "1"
 
-if not MOCK_DSPY:
-    import dspy
-    dspy.configure(lm=dspy.OpenAI())
-else:
+try:
+    if not MOCK_DSPY:
+        import dspy  # type: ignore
+        if hasattr(dspy, "OpenAI"):
+            dspy.configure(lm=dspy.OpenAI())
+        else:
+            raise ImportError
+    else:
+        raise ImportError
+except ImportError:
     from . import dspy_mock as dspy
     dspy.configure()
 

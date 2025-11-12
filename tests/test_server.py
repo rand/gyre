@@ -66,6 +66,38 @@ def test_metrics_endpoint_tracks_ingest():
     assert metrics["latest_observe"]["session_id"] == "sess-123"
 
 
+def test_feature_flags_and_dspy_metrics(tmp_path):
+    from server.run_dev_server import DATA_LOGGER, FLAGS
+
+    DATA_LOGGER.path = tmp_path / "propose.jsonl"
+    FLAGS.set("dspy_logging", True)
+    seed_session()
+    client.post(
+        "/patches/propose",
+        json={
+            "session_id": "sess-123",
+            "task_desc": "Need logging check",
+            "budgets": {"tokens": 100, "latency_ms": 50},
+            "slot_specs": [{"name": "task_header", "max_tokens": 50}],
+        },
+    )
+    metrics = client.get("/metrics/dspy").json()
+    assert metrics["entries"] >= 1
+
+    FLAGS.set("dspy_logging", False)
+    DATA_LOGGER.path.unlink(missing_ok=True)
+    client.post(
+        "/patches/propose",
+        json={
+            "session_id": "sess-123",
+            "task_desc": "Need logging check",
+            "budgets": {"tokens": 100, "latency_ms": 50},
+            "slot_specs": [{"name": "task_header", "max_tokens": 50}],
+        },
+    )
+    assert not DATA_LOGGER.path.exists()
+
+
 def test_inject_endpoint_returns_ack():
     seed_session()
     client.post("/governance/consent", json={"tenant": "demo", "project": "demo", "user": "sess-123", "consent": False})

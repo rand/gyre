@@ -17,7 +17,9 @@ from gyre.transports.broker import TransportBroker
 from gyre.audit import AuditLog
 from gyre.consent import ConsentRegistry
 from gyre.skills import SkillRegistry
+from gyre.feature_flags import FeatureFlags
 from gyre.logger import DatasetLogger
+from gyre.metrics import summarize_propose_logs
 
 app = FastAPI(title="Gyre Dev Server")
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -29,6 +31,7 @@ POLICY = PolicyEngine()
 AUDIT = AuditLog(DATA_DIR / "audit.log")
 CONSENTS = ConsentRegistry(DATA_DIR / "consent.json")
 SKILLS = SkillRegistry(DATA_DIR / "skills.json")
+FLAGS = FeatureFlags(DATA_DIR / "feature_flags.json")
 DATA_LOGGER = DatasetLogger(DATA_DIR / "logs/propose.jsonl")
 
 def build_fragments(task_desc: str, chosen: List[Dict[str, Any]], executed_tools: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -161,7 +164,8 @@ def propose(p: Propose):
         "stage_a": {"executed": executed_ids, "ledger": plan["ledger"]},
         "trace": selection["trace"],
     }
-    DATA_LOGGER.log_propose(p, response["stage_a"], selection, patch)
+    if FLAGS.is_enabled("dspy_logging"):
+        DATA_LOGGER.log_propose(p, response["stage_a"], selection, patch)
     return response
 
 @app.get("/review/candidates")
@@ -219,6 +223,10 @@ def review_audit(limit: int = 50):
 def observer_metrics():
     return METRICS.snapshot()
 
+@app.get("/metrics/dspy")
+def dspy_metrics():
+    return summarize_propose_logs(DATA_LOGGER.path)
+
 @app.post("/patches/inject")
 def inject_patch(req: InjectPatch):
     scope = req.patch.get("scope") or {"tenant":"demo","project":"demo","user":req.patch.get("target_session_id","demo")}
@@ -244,6 +252,15 @@ def inject_patch(req: InjectPatch):
 def set_consent(req: ConsentRequest):
     CONSENTS.grant(req.tenant, req.project, req.user, req.consent)
     return {"ok": True}
+
+@app.get("/feature_flags")
+def get_feature_flags():
+    return {"flags": FLAGS.all()}
+
+@app.post("/feature_flags")
+def set_feature_flag(name: str, value: bool):
+    FLAGS.set(name, value)
+    return {"ok": True, "flags": FLAGS.all()}
 
 @app.post("/transports/chaos")
 def set_transport_state(req: TransportChaosRequest):

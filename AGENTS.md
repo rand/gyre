@@ -16,6 +16,7 @@ Use `uv` for every workflow to keep dependencies reproducible:
 - `uv run python scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 800 --budget-latency 800` replays recorded candidates through the planner/selector pipeline and reports ledger stats.
 - `uv run python scripts/promote_skills.py --min-references 3` promotes high-signal nodes into the skill registry; pair with the `GET /skills` / `POST /skills/share` endpoints to debug cohort sharing.
 - `DSPY_MOCK=1 uv run python scripts/compile_dspy.py --data-dir data/train` compiles DSPy modules against logged datasets; follow with `uv run python scripts/evaluate_dspy.py --log data/logs/propose.jsonl` to inspect Stage A/B averages.
+- Feature flags live in `data/feature_flags.json` and can be toggled via `POST /feature_flags?name=dspy_logging&value=false` (used to pause logging or enable DSPy injections).
 - `POST /patches/inject` (or call via `curl`/tools) exercises the transport broker; pass `{"patch": {...}, "transport": "openai"}` using patches produced by `/patches/propose`.
 
 ## Documentation Stack & Precedence

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.evaluate_dspy import summarize
+from gyre.metrics import summarize_propose_logs as summarize
 
 
 def test_summarize_parses_log(tmp_path):

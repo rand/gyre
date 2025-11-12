@@ -8,3 +8,4 @@ data/consent.json
 data/graph.json
 data/logs/
 data/skills.json
+data/feature_flags.json

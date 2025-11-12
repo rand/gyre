@@ -120,7 +120,8 @@ Use `scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 6
 | `GET /review/candidates` / `POST /review/export_patch` / `GET /review/audit` | Reviewer workflow for manual CPP exports and audits. |
 | `POST /governance/consent` | Record tenant/project/user consent. |
 | `POST /transports/chaos` / `GET /transports/status` | Toggle transport availability and view health/cooldown metrics. |
-| `GET /metrics/observer` | Observe→ingest telemetry (calls, tokens, novelty). |
+| `GET /metrics/observer` / `GET /metrics/dspy` | Observe→ingest telemetry plus Stage A/B token averages. |
+| `GET /feature_flags` / `POST /feature_flags` | Inspect or toggle runtime flags (e.g., DSPy logging). |
 | `GET /skills` / `POST /skills/share` | List promoted skills (consent-gated) and share them with cohorts. |
 
 CLI helpers:
