@@ -17,6 +17,7 @@ from gyre.transports.broker import TransportBroker
 from gyre.audit import AuditLog
 from gyre.consent import ConsentRegistry
 from gyre.skills import SkillRegistry
+from gyre.logger import DatasetLogger
 
 app = FastAPI(title="Gyre Dev Server")
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -28,6 +29,7 @@ POLICY = PolicyEngine()
 AUDIT = AuditLog(DATA_DIR / "audit.log")
 CONSENTS = ConsentRegistry(DATA_DIR / "consent.json")
 SKILLS = SkillRegistry(DATA_DIR / "skills.json")
+DATA_LOGGER = DatasetLogger(DATA_DIR / "logs/propose.jsonl")
 
 def build_fragments(task_desc: str, chosen: List[Dict[str, Any]], executed_tools: List[Dict[str, Any]]) -> Dict[str, str]:
     evidence = []
@@ -153,12 +155,14 @@ def propose(p: Propose):
         "provenance": [],
         "scope": scope,
     }
-    return {
+    response = {
         "patches": [patch],
         "ledger": selection["ledger"],
         "stage_a": {"executed": executed_ids, "ledger": plan["ledger"]},
         "trace": selection["trace"],
     }
+    DATA_LOGGER.log_propose(p, response["stage_a"], selection, patch)
+    return response
 
 @app.get("/review/candidates")
 def review_candidates(session_id: str, limit: int = 20):
