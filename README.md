@@ -25,7 +25,7 @@ Gyre is a proactive memory supervisor for AI agents. It **observes** every turn 
 | **Stores & Planner** | Persist private working sets, update the temporal graph, run Stage‑A deferred query planner. | `gyre/stores/*`, `gyre/planner.py` |
 | **Selector & Composer** | Stage‑B knapsack+MMR selection under budgets, slot-based composition with citations. | `gyre/selector.py`, `gyre/composer.py` |
 | **Governance & Audit** | Consent registry, policy packs, redaction, immutable audit log. | `gyre/governance.py`, `gyre/consent.py`, `gyre/audit.py` |
-| **Transports** | Broker CPP payloads into provider transports with health/chaos controls. | `gyre/transports/broker.py`, `/patches/inject`, `/transports/status` |
+| **Transports** | Broker CPP payloads into provider transports with health/chaos controls. | `gyre/transports/broker.py`, `config/transports.json`, `/patches/inject`, `/transports/status`, `/metrics/transports` |
 | **Evaluation & Tooling** | Replay traces, generate datasets, reviewer console. | `scripts/evaluate_selection.py`, `scripts/reviewer_cli.py`, `tests/*` |
 
 Gyre’s product intent, spec, and architecture live in `docs/PRD.md`, `docs/SPEC.md`, and `docs/ARCHITECTURE.md`. Those documents set the precedent order; match code to the PRD first.
@@ -42,6 +42,14 @@ uv pip install -e .
 # Configure secrets
 cp .env.example .env
 # export OPENAI_API_KEY=..., ANTHROPIC_API_KEY=..., GEMINI_API_KEY=...
+# (set GYRE_TRANSPORT_FORCE_STUB=1 while hacking locally to avoid real injections)
+
+# Configure per-tenant transports (copy sample → real config)
+cp config/transports.example.json config/transports.json
+# fill tenant/project keys + rate limits before hitting live providers
+
+# (Optional) Configure pilot rollout cohorts
+# cp config/pilot_cohorts.example.json config/pilot_cohorts.json
 
 # Seed toy datasets
 uv run python scripts/seed_datasets.py
@@ -97,7 +105,7 @@ curl -X POST http://localhost:8000/patches/inject \
 ### Observe → Plan → Select → Compose
 1. `/observe/ingest` normalizes tap events and writes candidates/graph entities.
 2. Stage‑A planner (`gyre/planner.py`) emits `deferred_query` candidates and executes the highest EV queries under latency/token budgets.
-3. Stage‑B selector (`gyre/selector.py`) runs knapsack + MMR, returning `selected`, `ledger`, and `trace` so every token and millisecond is accounted for.
+3. Stage‑B selector (`gyre/selector.py`) runs knapsack + MMR, optionally biasing the order with the DSPy `RankCandidates` program (flag `dspy_selection`), and returns `selected`, `ledger`, `ranker` metadata, and trace so every token and millisecond is accounted for.
 4. Composer (`gyre/composer.py`) fills slot blueprints with per-slot token counts; both proactive and manual reviewers use the same blueprint.
 
 ### Governance & Transports
@@ -115,30 +123,39 @@ Use `scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 6
 | Endpoint | Description |
 | --- | --- |
 | `POST /observe/ingest` | Ingest tap batches, output task state + novelty report. |
+| `POST /sessions/register` | Register a session's tenant/project/user scope before observe/propose/inject. |
 | `POST /patches/propose` | Run Stage A/B under explicit budgets; returns patch, Stage‑A ledger, Stage‑B ledger, and trace. |
 | `POST /patches/inject` | Inject a patch through the broker (requires prior consent). |
 | `GET /review/candidates` / `POST /review/export_patch` / `GET /review/audit` | Reviewer workflow for manual CPP exports and audits. |
 | `POST /governance/consent` | Record tenant/project/user consent. |
 | `POST /transports/chaos` / `GET /transports/status` | Toggle transport availability and view health/cooldown metrics. |
+| `GET /metrics/transports` | Per-transport SLA snapshot (success/failure counts, latency, last error). |
 | `GET /metrics/observer` / `GET /metrics/dspy` | Observe→ingest telemetry plus Stage A/B token averages. |
+| `GET /metrics/prometheus` | Prometheus scrape endpoint (all metrics). |
 | `GET /feature_flags` / `POST /feature_flags` | Inspect or toggle runtime flags (e.g., DSPy logging). |
 | `GET /skills` / `POST /skills/share` | List promoted skills (consent-gated) and share them with cohorts. |
+| `POST /patches/feedback` / `GET /patches/feedback` | Hosts report accept/reject verdicts; reviewers inspect recent feedback + stats. |
+| `GET /pilot/status` | Pilot rollout status (whether gating config is active). |
 
 CLI helpers:
 - `scripts/replay_session.py` — stream JSON/JSONL traces into `/observe/ingest`.
+- `curl -X POST /sessions/register` — register tenant/project/user scopes before calling `/observe/ingest` or `/patches/propose`.
 - `scripts/pipe_provider_events.py` — turn provider logs into ingest batches (`--provider openai|anthropic`).
 - `scripts/reviewer_cli.py list|export` — inspect candidates and craft manual patches from the terminal.
 - `scripts/evaluate_selection.py` — offline Stage A/B evaluation harness.
 - `scripts/consolidate_graph.py` — prune stale nodes from the temporal graph (`--ttl-hours` defaults to 24) to keep persistence lean.
 - `scripts/promote_skills.py` — promote high-signal nodes into the skill registry and sync them for sharing.
+- `scripts/log_examples.py --log data/logs/propose.jsonl --out data/train` — extract DSPy training datasets (ranker inputs/outputs, summaries) from the `DatasetLogger` file.
+- `scripts/build_dspy_datasets.py --log data/logs/propose.jsonl --out data/train` or `make datasets` — canonical Stage A/B dataset builder that emits `rank|sum|ev|red|blue_{train,eval}.jsonl` (includes host feedback weights when `data/feedback.jsonl` exists).
 - `scripts/compile_dspy.py` / `scripts/evaluate_dspy.py` — compile DSPy programs from logged datasets and summarize Stage A/B performance; CI runs these in mock mode on every push.
+- `scripts/run_tests.sh` — deterministic test runner that prefers `.venv/bin/python -m pytest -q` and only falls back to `uv run` when no local venv exists.
 
 ---
 
 ## Development Workflow
 
 1. **Docs First**: docs/PRD → docs/SPEC → docs/ARCHITECTURE → README/AGENTS. Align changes with the documents (open a beads issue if they diverge).
-2. **Environment**: use `uv` for installs/tests (`uv run pytest -q`). Secrets live in `.env`.
+2. **Environment**: use `uv` for installs, but run tests via `make test` (which calls `scripts/run_tests.sh` → `.venv/bin/python -m pytest -q`) to avoid the current macOS SystemConfiguration panic that `uv run pytest -q` triggers inside the sandbox. The script also exports `DSPY_MOCK=1` and `GYRE_TRANSPORT_FORCE_STUB=1` so DSPy programs and transports stay in mock mode unless you explicitly opt in to real models. Secrets live in `.env`, and per-tenant transport credentials/rate limits live in `config/transports.json` (copy from the `.example` file and keep real keys out of git).
 3. **Issue Tracking**: run `bd quickstart` for the Beads workflow. Create tasks (`bd create "feat"`), model dependencies (`bd dep add`), and keep statuses updated (`bd update issue --status in_progress`).  
 4. **Coding Guidelines**: Python ≥3.10, type hints, four-space indent. Prefer composition over inheritance; update or create `tests/test_<module>.py` alongside code changes.
 5. **Policies & Consent**: before testing injections, grant consent via `POST /governance/consent`. The policy engine rejects over-budget patches.
@@ -147,10 +164,13 @@ CLI helpers:
 
 ## Testing & Evaluation
 
-- Unit/integration suite: `uv run python -m pytest -q`. Tests cover taps, observer, planner, selector, transports, reviewer flows, governance, and evaluation harness.
+- Unit/integration suite: `make test` (or `./scripts/run_tests.sh`) which uses the local `.venv/bin/python -m pytest -q` runner; this sidesteps the uv panic seen on macOS sandboxes while still honoring the same dependency set. The runner exports `DSPY_MOCK=1` and `GYRE_TRANSPORT_FORCE_STUB=1` so tests exercise the stubbed DSPy modules + transports without hitting real providers.  
+  > `uv run pytest -q` currently panics (`system-configuration` crate can't create a dynamic store when sandboxed). Outside the sandbox you can keep using `uv run` directly.
 - E2E smoke: run the dev server, replay a trace, request a patch, grant consent, and inject through a transport.
 - Offline selection analysis: `scripts/evaluate_selection.py` surfaces Stage A/B ledger stats for any recorded trace.
 - Chaos: `POST /transports/chaos` lets you simulate transport outages to ensure fallbacks + cooldowns behave.
+- DSPy training workflow: `DSPY_MOCK=1 ./scripts/run_tests.sh` for fast unit coverage, `scripts/build_dspy_datasets.py --log data/logs/propose.jsonl --out data/train` to refresh training corpora, followed by `DSPY_MOCK=0 uv run python scripts/compile_dspy.py --data-dir data/train` and `uv run python scripts/evaluate_dspy.py --log data/logs/propose.jsonl` when you're ready to benchmark real models.
+- Transport production workflow: copy `config/transports.example.json`, fill in tenant/project credentials + `rate_limit_per_min`, unset `GYRE_TRANSPORT_FORCE_STUB`, register sessions via `/sessions/register`, and monitor `/metrics/transports`, `/metrics/prometheus`, and `/transports/status` (scrape Prometheus using `scripts/prometheus/gyre.rules.yml` for sample alerts) while piloting with external hosts.
 
 ---
 
@@ -159,9 +179,12 @@ CLI helpers:
 - **M2**: Proactive CPP injection with transport broker, policy/redaction, consent, and chaos testing (all staged here).  
 - **M3**: Temporal graph hardening, skill promotion, and cohort sharing (see `ARCHITECTURE.md`).  
 - **M4**: Adaptive DSPy learning loops and automated evaluation harnesses.
+- **M7 (in planning)**: Pilot readiness with multi-tenant transport configuration, SLA telemetry, and host feedback loops.
 
-Research references: `RESEARCH-REFERENCES.md` aggregates the papers (ACE, DSPy, GraphRAG, etc.) that informed this design.
+Research references: `RESEARCH-REFERENCES.md` aggregates the papers (ACE, DSPy, GraphRAG, etc.) that informed this design. Operational guidance lives in `docs/OBSERVABILITY.md` (Prometheus scraping, alert rules, and future OTel hooks).
 
 ---
 
 Gyre is built to be extended: replace the stub transports with real ones, wire your observability stack into the telemetry endpoints, and iterate on the planner/selector using the evaluation harness. Contributions that keep efficacy-per-token high and policies airtight are welcome.
+- `scripts/prometheus/gyre.rules.yml` — sample Prometheus alert rules for transport latency and error budgets (copy into your infra if you’re monitoring pilots).
+- `scripts/validate_pilot.py --config-dir config` — sanity-check `config/transports.json` and `config/pilot_cohorts.json` before enabling external pilots.

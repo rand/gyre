@@ -77,6 +77,39 @@ Response contains ACK id, routed transport, policy verdict, and latency metrics.
 ### GET /patches/audit
 Filters by session/tenant/time; returns provenance, redaction diff, ledger, and outcome notes.
 
+### GET /metrics/transports
+Returns per-transport SLA metrics:
+```json
+{
+  "transports": {
+    "openai": {"success": 12, "failure": 1, "avg_latency_ms": 210.4, "last_latency_ms": 198.2, "last_error": null},
+    "anthropic": {"success": 10, "failure": 2, "avg_latency_ms": 280.0, "last_latency_ms": 310.5, "last_error": "503: overload"}
+  }
+}
+```
+
+### GET /metrics/prometheus
+Exposes Prometheus-formatted metrics (ingest counts, selection tokens, transport success/failure, latency histograms) for scraping.
+
+### POST /patches/feedback
+Hosts report accept/reject decisions.
+```json
+{
+  "patch_id": "patch-1",
+  "session_id": "sess-123",
+  "verdict": "accepted",
+  "reason": "used in next turn",
+  "transport": "openai"
+}
+```
+Response includes appended record and aggregate stats.
+
+### GET /patches/feedback
+Returns feedback stats and recent entries for reviewer dashboards.
+
+### GET /pilot/status
+Indicates whether pilot gating is active (based on `config/pilot_cohorts.json`).
+
 ## 3. Data Contracts
 ### Context Candidate
 ```json
@@ -168,7 +201,7 @@ Extends prior spec with slot metadata and compression audit.
 ### 4.5 Selector
 - Implements two-stage greedy algorithm:
   1. `SelectQueries`: maximize Σ(EV_i) subject to Σ cost_i ≤ planner budget, with gating on risk and cooldowns.  
-  2. `SelectContext`: submodular utility `u_i = w·features - λ·redundancy - μ·staleness - ν·risk`, solved via knapsack+MMR using ledgers.  
+  2. `SelectContext`: submodular utility `u_i = w·features - λ·redundancy - μ·staleness - ν·risk`, solved via knapsack+MMR using ledgers, optionally pre-ordered by the DSPy `RankCandidates` program (flag `dspy_selection`).  
 - Outputs explanation trace (marginal gain, budget usage, rejection reason).
 
 ### 4.6 Composer & Compression
@@ -185,7 +218,8 @@ Extends prior spec with slot metadata and compression audit.
 ### 4.8 Transport Broker
 - Chooses provider channel based on session capabilities, budget headroom, and transport health.  
 - OpenAI: Realtime/system patch; Anthropic: Computer Use tool/action; Gemini: function call.  
-- Handles retries with idempotency tokens, circuit breakers, and ack telemetry.
+- Handles retries with idempotency tokens, circuit breakers, ack telemetry, and publishes `/metrics/transports` for SLA dashboards.
+- Credentials load from `.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) or `config/transports.json` (per-tenant/project overrides with `rate_limit_per_min`). When `GYRE_TRANSPORT_FORCE_STUB=1` or keys are absent, adapters fall back to local stub acks to keep tests offline.
 
 ### 4.9 DSPy Programs
 | Signature | Purpose | Metric / Optimizer |
@@ -197,6 +231,8 @@ Extends prior spec with slot metadata and compression audit.
 | EVofDeferredQuery | EV estimates | Correlation with realized reward — COPRO |
 | RedactForScope | Policy-compliant redaction | Zero violations — COPRO |
 | BlueprintFill | Slot arrangement | Downstream success + cap compliance — MIPROv2 |
+
+All DSPy datasets are produced from the `/patches/propose` logger via `scripts/build_dspy_datasets.py`, which emits `rank|sum|ev|red|blue_{train,eval}.jsonl` along with coverage metrics (positive rate, execution rate, slot counts). Compilation scripts (`scripts/compile_dspy.py`, `scripts/evaluate_dspy.py`) consume these files directly.
 
 Fallback deterministic heuristics mirror existing stubs (`gyre/observer.py`, `gyre/selector.py`, etc.) for offline/dev usage.
 

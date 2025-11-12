@@ -1,0 +1,43 @@
+{
+  "defaults": {
+    "openai": {
+      "model": "gpt-4o-mini",
+      "timeout": 10,
+      "max_retries": 2
+    },
+    "anthropic": {
+      "model": "claude-3-5-sonnet-latest",
+      "timeout": 10,
+      "max_retries": 2
+    },
+    "gemini": {
+      "model": "models/gemini-1.5-flash",
+      "timeout": 10,
+      "max_retries": 2
+    }
+  },
+  "tenants": {
+    "demo": {
+      "openai": {
+        "api_key": "OPENAI_DEMO_KEY",
+        "rate_limit_per_min": 120
+      },
+      "anthropic": {
+        "api_key": "ANTHROPIC_DEMO_KEY",
+        "rate_limit_per_min": 60
+      },
+      "gemini": {
+        "api_key": "GEMINI_DEMO_KEY",
+        "rate_limit_per_min": 60
+      },
+      "projects": {
+        "pilot": {
+          "openai": {
+            "api_key": "OPENAI_PILOT_KEY",
+            "rate_limit_per_min": 30
+          }
+        }
+      }
+    }
+  }
+}

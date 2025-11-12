@@ -29,10 +29,11 @@ def load_candidates(path: Path) -> List[Dict[str, object]]:
 def evaluate(trace_path: Path, budgets: Dict[str, int]) -> Dict[str, object]:
     planner = DeferredQueryPlanner.default()
     raw_candidates = load_candidates(trace_path)
-    stage_a = planner.run(" ".join(c.get("content", {}).get("text", "") for c in raw_candidates), budgets, "eval")
+    task_text = " ".join(c.get("content", {}).get("text", "") for c in raw_candidates)
+    stage_a = planner.run(task_text, budgets, "eval")
     pool = raw_candidates + stage_a["executed"]
     retrieved = retrieve(" ".join(c.get("content", {}).get("text", "") for c in pool), pool)
-    selection = select(retrieved, budgets)
+    selection = select(retrieved, budgets, task_desc=task_text)
     return {
         "stage_a": stage_a["ledger"],
         "stage_b": selection["ledger"],

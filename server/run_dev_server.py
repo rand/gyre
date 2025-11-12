@@ -1,8 +1,16 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response, Request
 from pydantic import BaseModel
 from typing import List, Dict, Any
 import datetime as dt
 from pathlib import Path
+
+try:
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+except ImportError:  # pragma: no cover - optional dependency
+    CONTENT_TYPE_LATEST = "text/plain; charset=utf-8"
+
+    def generate_latest() -> bytes:
+        return b""
 
 from gyre.observer import observe, infer_task_desc
 from gyre.stores.private_store import PrivateStore
@@ -20,9 +28,15 @@ from gyre.skills import SkillRegistry
 from gyre.feature_flags import FeatureFlags
 from gyre.logger import DatasetLogger
 from gyre.metrics import summarize_propose_logs
+from gyre.dspy_ranker import DSPYRanker
+from gyre.metrics_exporter import record_observe as prom_record_observe, record_selection as prom_record_selection
+from gyre.feedback import FeedbackStore
+from gyre.pilot import PilotRollout
+from gyre.sessions import SessionRegistry
 
 app = FastAPI(title="Gyre Dev Server")
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
 PRIVATE = PrivateStore()
 GRAPH = TemporalGraph()
 PLANNER = DeferredQueryPlanner.default()
@@ -33,6 +47,10 @@ CONSENTS = ConsentRegistry(DATA_DIR / "consent.json")
 SKILLS = SkillRegistry(DATA_DIR / "skills.json")
 FLAGS = FeatureFlags(DATA_DIR / "feature_flags.json")
 DATA_LOGGER = DatasetLogger(DATA_DIR / "logs/propose.jsonl")
+RANKER = DSPYRanker()
+FEEDBACK = FeedbackStore(DATA_DIR / "feedback.jsonl")
+PILOT = PilotRollout(CONFIG_DIR / "pilot_cohorts.json")
+SESSIONS = SessionRegistry()
 
 def build_fragments(task_desc: str, chosen: List[Dict[str, Any]], executed_tools: List[Dict[str, Any]]) -> Dict[str, str]:
     evidence = []
@@ -64,6 +82,7 @@ class Propose(BaseModel):
     task_desc: str
     budgets: Dict[str,int]
     slot_specs: List[Dict[str,Any]]
+    scope: Dict[str,str] | None = None
 
 class ManualExport(BaseModel):
     session_id: str
@@ -74,6 +93,14 @@ class ManualExport(BaseModel):
 class InjectPatch(BaseModel):
     patch: Dict[str, Any]
     transport: str = "best"
+
+class PatchFeedback(BaseModel):
+    patch_id: str
+    session_id: str
+    verdict: str
+    reason: str | None = None
+    transport: str | None = None
+    user: str | None = None
 
 class ConsentRequest(BaseModel):
     tenant: str
@@ -89,8 +116,20 @@ class ShareSkillRequest(BaseModel):
     skill_id: str
     cohort: str
 
+class RegisterSession(BaseModel):
+    session_id: str
+    tenant: str
+    project: str
+    user: str
+
+@app.post("/sessions/register")
+def register_session(req: RegisterSession):
+    scope = SESSIONS.register(req.session_id, tenant=req.tenant, project=req.project, user=req.user)
+    return {"session_id": req.session_id, "scope": scope}
+
 @app.post("/observe/ingest")
 def ingest(payload: Ingest):
+    scope = SESSIONS.get(payload.session_id, user=payload.session_id)
     task = infer_task_desc(payload.events)
     state = observe(task, payload.events)
     novel = state["novelty"]["novel_events"]
@@ -116,7 +155,7 @@ def ingest(payload: Ingest):
             for ev in novel
         ],
         "session_id": payload.session_id,
-        "scope": {"tenant":"demo","project":"demo","user":payload.session_id},
+        "scope": scope,
         "graph": {"entities": state.get("entities",[]), "relations": []}
     }
     PRIVATE.upsert(cand)
@@ -128,13 +167,25 @@ def ingest(payload: Ingest):
         novelty_score=novelty_score,
         tokens_est=tokens_est,
     )
+    prom_record_observe(scope["tenant"], len(payload.events), tokens_est)
     return {"ok": True, "state": state}
 
 @app.post("/patches/propose")
 def propose(p: Propose):
+    if p.scope:
+        scope = SESSIONS.register(
+            p.session_id,
+            tenant=p.scope.get("tenant", "demo"),
+            project=p.scope.get("project", "demo"),
+            user=p.scope.get("user", p.session_id),
+        )
+    else:
+        scope = SESSIONS.get(p.session_id, user=p.session_id)
+    allowed, message = PILOT.is_allowed(scope)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=message or "Pilot rollout disabled for this scope")
     plan = PLANNER.run(p.task_desc, p.budgets, p.session_id)
     executed_ids = []
-    scope = {"tenant":"demo","project":"demo","user":p.session_id}
     for deferred in plan["deferred"]:
         deferred["scope"] = scope
         PRIVATE.upsert(deferred)
@@ -144,7 +195,14 @@ def propose(p: Propose):
         executed_ids.append(result["id"])
     pool = PRIVATE.query(limit=200)
     pool = retrieve(p.task_desc, pool)
-    selection = select(pool, p.budgets, risk_cap=p.budgets.get("risk", "low"))
+    ranker = RANKER if FLAGS.is_enabled("dspy_selection") else None
+    selection = select(
+        pool,
+        p.budgets,
+        task_desc=p.task_desc,
+        risk_cap=p.budgets.get("risk", "low"),
+        ranker=ranker,
+    )
     chosen = selection["selected"]
     # Compose a tiny patch
     fragments = build_fragments(p.task_desc, chosen, plan["executed"])
@@ -153,6 +211,7 @@ def propose(p: Propose):
     patch = {
         "id": "patch-1", "task_id": "t-1", "target_session_id": p.session_id,
         "ttl_ms": 30000, "slot": "retrieved_evidence", "body": redacted,
+        "body_unredacted": blueprint,
         "budget": selection["ledger"],
         "policy": {"sensitivity_max": "low"},
         "provenance": [],
@@ -161,11 +220,25 @@ def propose(p: Propose):
     response = {
         "patches": [patch],
         "ledger": selection["ledger"],
-        "stage_a": {"executed": executed_ids, "ledger": plan["ledger"]},
+        "stage_a": {
+            "executed": executed_ids,
+            "executed_plan_ids": plan["executed_plan_ids"],
+            "ledger": plan["ledger"],
+            "plans": plan["deferred"],
+        },
         "trace": selection["trace"],
     }
     if FLAGS.is_enabled("dspy_logging"):
-        DATA_LOGGER.log_propose(p, response["stage_a"], selection, patch)
+        DATA_LOGGER.log_propose(
+            p,
+            response["stage_a"],
+            selection,
+            patch,
+            pool=pool,
+        )
+    if selection.get("ranker"):
+        response["ranker"] = selection["ranker"]
+    prom_record_selection(scope["tenant"], selection["ledger"].get("tokens_used", 0))
     return response
 
 @app.get("/review/candidates")
@@ -227,15 +300,22 @@ def observer_metrics():
 def dspy_metrics():
     return summarize_propose_logs(DATA_LOGGER.path)
 
+@app.get("/metrics/transports")
+def transport_metrics():
+    return {"transports": BROKER.metrics_snapshot()}
+
 @app.post("/patches/inject")
 def inject_patch(req: InjectPatch):
     scope = req.patch.get("scope") or {"tenant":"demo","project":"demo","user":req.patch.get("target_session_id","demo")}
+    allowed, message = PILOT.is_allowed(scope)
+    if not allowed:
+        raise HTTPException(status_code=403, detail=message or "Pilot rollout disabled for this scope")
     if not CONSENTS.has_consent(scope["tenant"], scope["project"], scope["user"]):
         raise HTTPException(status_code=403, detail="No consent on record for this scope")
     policy = POLICY.evaluate(req.patch, scope)
     if not policy["allowed"]:
         raise HTTPException(status_code=400, detail=policy["reason"] or "Policy violation")
-    result = BROKER.inject(req.patch, req.transport)
+    result = BROKER.inject(req.patch, req.transport, scope=scope)
     AUDIT.append(
         {
             "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -272,6 +352,10 @@ def set_transport_state(req: TransportChaosRequest):
 def transport_status():
     return BROKER.status()
 
+@app.get("/metrics/prometheus")
+def prometheus_metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 @app.get("/skills")
 def list_skills(session_id: str, cohort: str | None = None):
     scope = {"tenant":"demo","project":"demo","user":session_id}
@@ -294,3 +378,28 @@ def share_skill(req: ShareSkillRequest):
         }
     )
     return {"ok": True}
+
+@app.post("/patches/feedback")
+def patch_feedback(feedback: PatchFeedback):
+    patch = PRIVATE.get(feedback.patch_id)
+    if not patch:
+        raise HTTPException(status_code=404, detail="Unknown patch_id")
+    entry = FEEDBACK.append(
+        {
+            "patch_id": feedback.patch_id,
+            "session_id": feedback.session_id,
+            "verdict": feedback.verdict.lower(),
+            "reason": feedback.reason,
+            "transport": feedback.transport or patch.get("transport"),
+            "user": feedback.user,
+        }
+    )
+    return {"ok": True, "feedback": entry, "stats": FEEDBACK.stats()}
+
+@app.get("/patches/feedback")
+def feedback_tail(limit: int = 20):
+    return {"stats": FEEDBACK.stats(), "recent": FEEDBACK.tail(limit)}
+
+@app.get("/pilot/status")
+def pilot_status():
+    return {"enabled": PILOT.is_enabled()}

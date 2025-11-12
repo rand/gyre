@@ -16,6 +16,8 @@ class DatasetLogger:
         stage_a: Dict[str, Any],
         selection: Dict[str, Any],
         patch: Dict[str, Any],
+        *,
+        pool: List[Dict[str, Any]] | None = None,
     ) -> None:
         payload_dict = _to_dict(payload)
         entry = {
@@ -26,6 +28,8 @@ class DatasetLogger:
             "selection": selection,
             "patch": patch,
         }
+        if pool is not None:
+            entry["pool"] = pool
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
 

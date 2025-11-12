@@ -1,12 +1,18 @@
 from fastapi.testclient import TestClient
 
-from server.run_dev_server import app, PRIVATE
+from server.run_dev_server import app, PRIVATE, FEEDBACK, PILOT
+from gyre.feedback import FeedbackStore
+from gyre.pilot import PilotRollout
 
 client = TestClient(app)
 
 
 def seed_session():
     PRIVATE.items.clear()
+    client.post(
+        "/sessions/register",
+        json={"session_id": "sess-123", "tenant": "demo", "project": "demo", "user": "sess-123"},
+    )
     resp = client.post(
         "/observe/ingest",
         json={
@@ -37,6 +43,9 @@ def test_ingest_and_propose_flow():
     pdata = propose.json()
     assert pdata["patches"]
     assert pdata["stage_a"]["executed"]
+    assert pdata["stage_a"]["executed_plan_ids"]
+    assert pdata["stage_a"]["plans"]
+    assert pdata["patches"][0]["body_unredacted"]
     assert pdata["ledger"]["tokens_used"] <= 500
     assert pdata["trace"]
 
@@ -119,6 +128,42 @@ def test_inject_endpoint_returns_ack():
     data = resp.json()
     assert data["ok"]
     assert data["transport"] == "openai"
+    transport_metrics = client.get("/metrics/transports").json()
+    assert transport_metrics["transports"]["openai"]["success"] >= 1
     client.post("/transports/chaos", json={"transport": "openai", "available": False})
     status = client.get("/transports/status").json()
     assert status["transports"]["openai"] is False
+
+
+def test_feedback_endpoints(tmp_path):
+    from server import run_dev_server as srv
+
+    srv.FEEDBACK = FeedbackStore(tmp_path / "feedback.jsonl")
+    PRIVATE.upsert({"id": "p-1", "session_id": "sess-123", "scope": {"tenant": "demo", "project": "demo", "user": "sess-123"}})
+    resp = client.post(
+        "/patches/feedback",
+        json={"patch_id": "p-1", "session_id": "sess-123", "verdict": "accepted"},
+    )
+    assert resp.status_code == 200
+    stats = client.get("/patches/feedback").json()
+    assert stats["stats"]["accepted"] >= 1
+
+
+def test_pilot_gating_blocks_disallowed_scope(tmp_path):
+    from server import run_dev_server as srv
+
+    cfg = tmp_path / "pilot.json"
+    cfg.write_text('{"defaults":{"allow":false}}', encoding="utf-8")
+    srv.PILOT = PilotRollout(cfg)
+    seed_session()
+    resp = client.post(
+        "/patches/propose",
+        json={
+            "session_id": "sess-123",
+            "task_desc": "Need gating test plan",
+            "budgets": {"tokens": 100, "latency_ms": 50},
+            "slot_specs": [{"name": "task_header", "max_tokens": 50}],
+        },
+    )
+    assert resp.status_code == 403
+    srv.PILOT = PilotRollout()

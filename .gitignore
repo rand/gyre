@@ -9,3 +9,9 @@ data/graph.json
 data/logs/
 data/skills.json
 data/feature_flags.json
+data/train/
+gyre.egg-info/
+config/transports.json
+config/pilot_cohorts.json
+data/feedback.jsonl
+scripts/prometheus/gyre.rules.yml

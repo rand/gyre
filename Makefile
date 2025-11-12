@@ -9,13 +9,16 @@ run:
 	uv run python server/run_dev_server.py
 
 test:
-	uv run pytest -q
+	./scripts/run_tests.sh
 
 seed:
 	uv run python scripts/seed_datasets.py
 
 log:
-	uv run python scripts/log_examples.py --responses data/logs/propose.jsonl --out data/train
+	uv run python scripts/log_examples.py --log data/logs/propose.jsonl --out data/train
+
+datasets:
+	uv run python scripts/build_dspy_datasets.py --log data/logs/propose.jsonl --out data/train
 
 compile-dspy:
 	DSPY_MOCK=1 uv run python scripts/compile_dspy.py --data-dir data/train

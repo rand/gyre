@@ -7,16 +7,20 @@ Source lives in `gyre/`, split by responsibility (`selector.py`, `retriever.py`,
 Use `uv` for every workflow to keep dependencies reproducible:
 - `uv venv && uv pip install -e .` bootstraps a local environment.
 - `uv run python server/run_dev_server.py` (or `make run`) starts the FastAPI dev server with hot reload.
-- `uv run pytest -q` (or `make test`) runs the unit suite.
+- `make test` (or `./scripts/run_tests.sh`) runs the suite via `.venv/bin/python -m pytest -q` with `DSPY_MOCK=1` and `GYRE_TRANSPORT_FORCE_STUB=1`, avoiding both the macOS SystemConfiguration panic and accidental real transport calls.
 - `uv run python scripts/seed_datasets.py` (or `make seed`) refreshes `data/train/` so DSPy optimizers have sample traces.
+- `cp config/transports.example.json config/transports.json` before piloting so each tenant/project has explicit provider keys + `rate_limit_per_min` entries (keep the real file out of git; leave `GYRE_TRANSPORT_FORCE_STUB=1` on if you want to remain offline).
+- `cp config/pilot_cohorts.example.json config/pilot_cohorts.json` if you need rollout gating; scopes outside the allowlist will receive 403s from `/patches/propose` and `/patches/inject`.
 - `uv run python scripts/replay_session.py --session demo --trace traces/example.jsonl` replays saved traces through `/observe/ingest`.
+- `curl -X POST /sessions/register` (or similar) should be called before ingest/propose/inject so each session is associated with the correct tenant/project/user scope.
 - `uv run python scripts/pipe_provider_events.py --provider openai --session demo --trace logs/openai.jsonl` converts provider logs (OpenAI/Anthropic) into ingest events.
 - `uv run python scripts/reviewer_cli.py list --session demo` lists recent candidates; `... export --session demo --candidates <ids>` emits manual CPP blueprints.
 - `uv run python scripts/reviewer_cli.py export --session demo --candidates evt:demo:1,evt:demo:2` captures manual CPP payloads after Stage A/B selection.
 - `uv run python scripts/evaluate_selection.py --trace traces/example.json --budget-tokens 800 --budget-latency 800` replays recorded candidates through the planner/selector pipeline and reports ledger stats.
 - `uv run python scripts/promote_skills.py --min-references 3` promotes high-signal nodes into the skill registry; pair with the `GET /skills` / `POST /skills/share` endpoints to debug cohort sharing.
 - `DSPY_MOCK=1 uv run python scripts/compile_dspy.py --data-dir data/train` compiles DSPy modules against logged datasets; follow with `uv run python scripts/evaluate_dspy.py --log data/logs/propose.jsonl` to inspect Stage A/B averages.
-- Feature flags live in `data/feature_flags.json` and can be toggled via `POST /feature_flags?name=dspy_logging&value=false` (used to pause logging or enable DSPy injections).
+- `scripts/build_dspy_datasets.py --log data/logs/propose.jsonl --out data/train` (or `make datasets`) materializes canonical datasets (`rank|sum|ev|red|blue_{train,eval}.jsonl`) before you compile DSPy modules; check the JSON summary for coverage ratios.
+- Feature flags live in `data/feature_flags.json` and can be toggled via `POST /feature_flags?name=dspy_logging&value=false` (used to pause logging or enable DSPy injections); set `dspy_selection=true` to route Stage B ordering through the DSPy ranker.
 - `POST /patches/inject` (or call via `curl`/tools) exercises the transport broker; pass `{"patch": {...}, "transport": "openai"}` using patches produced by `/patches/propose`.
 
 ## Documentation Stack & Precedence
@@ -32,6 +36,7 @@ Code targets Python ≥3.10 with 4-space indentation, type hints, and descriptiv
 
 ## Testing Guidelines
 Write Pytest tests beside related modules (`tests/test_<module>.py`) and cover both high-confidence paths and constraint edges (token caps, latency budgets, governance filters). When adding a new selector or retriever strategy, create targeted fixtures rather than mocking everything. Keep assertions semantic (e.g., compare IDs or structured dicts) to avoid brittle float checks. Update or seed minimal datasets if tests rely on serialized memory objects.
+- The test runner exports `DSPY_MOCK=1` and `GYRE_TRANSPORT_FORCE_STUB=1`, so DSPy programs and transports use the lightweight stubs. When validating against real providers, explicitly unset those variables, fill `config/transports.json`, and regenerate datasets via `scripts/build_dspy_datasets.py`.
 
 ## Commit & Pull Request Guidelines
 The repo has no public history yet; adopt Conventional Commits (`feat:`, `fix:`, `chore:`) so future automation stays predictable. Keep commits self-contained with matching tests and a clear “why.” Pull requests should link relevant PRD/SPEC sections, summarize user-visible outcomes, list test commands (`uv run pytest -q`, etc.), and attach screenshots or JSON samples when touching transports or APIs. Keep diffs focused; spin off follow-up issues for speculative work.

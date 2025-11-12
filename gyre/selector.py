@@ -1,6 +1,8 @@
+import logging
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
+logger = logging.getLogger(__name__)
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 
@@ -78,8 +80,11 @@ def select(
     candidates: List[Dict[str, Any]],
     budgets: Dict[str, int],
     *,
+    task_desc: str = "",
     risk_cap: str = "low",
     weights: Optional[Dict[str, float]] = None,
+    ranker: Optional[Any] = None,
+    rank_weight: float = 0.4,
 ) -> Dict[str, Any]:
     ledger = SelectionLedger(
         tokens_cap=budgets.get("tokens", 800),
@@ -91,18 +96,41 @@ def select(
     chosen: List[Dict[str, Any]] = []
     trace: List[Dict[str, Any]] = []
     remaining = candidates[:]
+    ranking: List[str] = []
+    ranking_meta: Optional[Dict[str, Any]] = None
+    if ranker:
+        try:
+            if hasattr(ranker, "rank"):
+                ranking, ranking_meta = ranker.rank(task_desc, budgets, candidates)
+            else:
+                ranking, ranking_meta = ranker(task_desc, budgets, candidates)
+        except AttributeError:
+            ranking, ranking_meta = ranker(task_desc, budgets, candidates)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Ranker failed; continuing without DSPy order: %s", exc)
+            ranking = []
+            ranking_meta = {"mode": "error", "error": str(exc)}
+    order = {cid: idx for idx, cid in enumerate(ranking)}
+    order_size = max(1, len(order))
 
     while remaining:
         best = None
         best_gain = -1e9
+        best_rank_bonus = 0.0
         for item in remaining:
             if not ledger.can_fit(item):
                 continue
             if not ledger.within_risk(item):
                 continue
-            gain = utility(item, weights) + mmr_diversity_score(item, chosen)
+            rank_bonus = 0.0
+            if order:
+                pos = order.get(item.get("id"))
+                if pos is not None:
+                    rank_bonus = (order_size - pos) / order_size
+            gain = utility(item, weights) + mmr_diversity_score(item, chosen) + rank_weight * rank_bonus
             if gain > best_gain:
                 best_gain, best = gain, item
+                best_rank_bonus = rank_bonus
         if best is None:
             break
         chosen.append(best)
@@ -113,13 +141,17 @@ def select(
                 "gain": round(best_gain, 3),
                 "tokens": best.get("costs", {}).get("tokens_est", 0),
                 "latency": best.get("costs", {}).get("latency_est_ms", 0),
+                "rank_bonus": round(best_rank_bonus * rank_weight, 3),
             }
         )
         remaining.remove(best)
 
     ledger.rejected = len(candidates) - len(chosen)
-    return {
+    result: Dict[str, Any] = {
         "selected": chosen,
         "ledger": ledger.asdict(),
         "trace": trace,
     }
+    if ranking_meta:
+        result["ranker"] = ranking_meta
+    return result

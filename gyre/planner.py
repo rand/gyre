@@ -140,11 +140,21 @@ class DeferredQueryPlanner:
             ledger["latency_ms_used"] += lat
             ledger["tokens_used"] += tok
 
-        deferred_candidates = [plan.to_candidate(session_id) for plan in plans]
+        deferred_candidates: List[Dict[str, Any]] = []
+        plan_ids: Dict[int, str] = {}
+        for plan in plans:
+            candidate = plan.to_candidate(session_id)
+            deferred_candidates.append(candidate)
+            plan_ids[id(plan)] = candidate["id"]
+
+        executed_plan_ids = set()
         executed_candidates: List[Dict[str, Any]] = []
         for plan in selected:
             provider = self._provider_by_name(plan.provider)
             payload = provider.execute(plan, task_desc)
+            plan_id = plan_ids.get(id(plan))
+            if plan_id:
+                executed_plan_ids.add(plan_id)
             executed_candidates.append(
                 {
                     "id": f"tool:{session_id}:{plan.provider}:{uuid.uuid4().hex[:8]}",
@@ -160,10 +170,15 @@ class DeferredQueryPlanner:
                 }
             )
 
+        for cand in deferred_candidates:
+            meta = cand.setdefault("metadata", {})
+            meta["executed"] = cand["id"] in executed_plan_ids
+
         return {
             "deferred": deferred_candidates,
             "executed": executed_candidates,
             "ledger": ledger,
+            "executed_plan_ids": list(executed_plan_ids),
         }
 
     def _propose_plans(self, task_desc: str) -> List[QueryPlan]:

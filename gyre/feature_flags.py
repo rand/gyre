@@ -12,6 +12,7 @@ class FeatureFlags:
         self.flags: Dict[str, bool] = {
             "dspy_logging": True,
             "dspy_injection": False,
+            "dspy_selection": False,
         }
         self._load()
 

@@ -1,6 +1,13 @@
 import os
+from pathlib import Path
 
 MOCK_DSPY = os.environ.get("DSPY_MOCK", "0") == "1"
+
+CACHE_ROOT = Path(__file__).resolve().parents[1] / "data" / "dspy_cache"
+CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("DSP_CACHEDIR", str(CACHE_ROOT))
+os.environ.setdefault("DSP_NOTEBOOK_CACHEDIR", str(CACHE_ROOT / "notebook"))
+os.environ.setdefault("DSPY_CACHEDIR", str(CACHE_ROOT / "litellm"))
 
 try:
     if not MOCK_DSPY:

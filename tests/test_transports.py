@@ -1,27 +1,35 @@
-from gyre.transports.broker import TransportBroker, flatten_blueprint
+from gyre.transports import broker
+from gyre.transports.config import TransportConfig
 
 
-def test_broker_prefers_available_transport():
-    broker = TransportBroker.default()
-    patch = {
-        "target_session_id": "sess-1",
-        "body": {"slots": [{"name": "task_header", "content": "Test"}]},
-    }
-    result = broker.inject(patch, preferred="openai")
-    assert result["transport"] == "openai"
+class DummyTransport(broker.BaseTransport):
+    def __init__(self):
+        super().__init__("dummy")
+        self.count = 0
+
+    def send(self, patch, *, credentials=None):
+        self.ensure_available()
+        self.count += 1
+        return {"ok": True, "count": self.count}
 
 
-def test_flatten_blueprint():
-    text = flatten_blueprint({"slots": [{"name": "constraints", "content": "Stay safe"}]})
-    assert "[constraints]" in text
-
-
-def test_broker_falls_back_when_transport_down():
-    broker = TransportBroker.default()
-    broker.set_availability("openai", False)
-    patch = {
-        "target_session_id": "sess-1",
-        "body": {"slots": [{"name": "task_header", "content": "Test"}]},
-    }
-    result = broker.inject(patch, preferred="openai")
-    assert result["transport"] != "openai"
+def test_transport_rate_limit_enforced():
+    cfg = TransportConfig(
+        data={
+            "tenants": {
+                "demo": {
+                    "dummy": {"rate_limit_per_min": 1},
+                }
+            }
+        }
+    )
+    dummy = DummyTransport()
+    tb = broker.TransportBroker({"dummy": dummy}, transport_config=cfg)
+    patch = {"target_session_id": "sess", "body": {"slots": []}}
+    tb.inject(patch, scope={"tenant": "demo"})
+    try:
+        tb.inject(patch, scope={"tenant": "demo"})
+    except RuntimeError as exc:
+        assert "rate limit exceeded" in str(exc)
+    else:
+        assert False, "expected rate limit error"

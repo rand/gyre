@@ -1,0 +1,16 @@
+{
+  "defaults": {
+    "allow": false
+  },
+  "tenants": {
+    "demo": {
+      "allow": true,
+      "message": "Demo tenant pilot",
+      "projects": {
+        "pilot": {
+          "allow": true
+        }
+      }
+    }
+  }
+}
